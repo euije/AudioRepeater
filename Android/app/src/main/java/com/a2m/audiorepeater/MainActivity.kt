@@ -211,7 +211,10 @@ private fun AudioRepeaterApp(debugAudioConfig: DebugAudioConfig? = null) {
                 sameFileDelaySeconds = "0.8",
                 differentFileDelaySeconds = "1.0",
                 useAaudioExclusive = false,
-                useDirectAlsa = false
+                useDirectAlsa = false,
+                useLowLatencyAudioTrack = false,
+                forceStereoRouteAssist = false,
+                directAlsaPcmDevice = null
             )
             Log.i(LOG_TAG, "debug fallback files=${debugFiles.size}")
         }
@@ -226,7 +229,10 @@ private fun AudioRepeaterApp(debugAudioConfig: DebugAudioConfig? = null) {
                     sameFileDelaySeconds = currentConfig?.sameFileDelaySeconds ?: "0.8",
                     differentFileDelaySeconds = currentConfig?.differentFileDelaySeconds ?: "1.0",
                     useAaudioExclusive = currentConfig?.useAaudioExclusive ?: false,
-                    useDirectAlsa = currentConfig?.useDirectAlsa ?: false
+                    useDirectAlsa = currentConfig?.useDirectAlsa ?: false,
+                    useLowLatencyAudioTrack = currentConfig?.useLowLatencyAudioTrack ?: false,
+                    forceStereoRouteAssist = currentConfig?.forceStereoRouteAssist ?: false,
+                    directAlsaPcmDevice = currentConfig?.directAlsaPcmDevice
                 )
                 Log.i(LOG_TAG, "debug path fallback files=${debugFiles.size}")
             }
@@ -272,7 +278,10 @@ private fun AudioRepeaterApp(debugAudioConfig: DebugAudioConfig? = null) {
             sameFileDelayMillis = activeConfig.sameFileDelaySeconds.toDelayMillisOrNull() ?: 0L,
             differentFileDelayMillis = activeConfig.differentFileDelaySeconds.toDelayMillisOrNull() ?: 0L,
             useAaudioExclusive = activeConfig.useAaudioExclusive,
-            useDirectAlsa = activeConfig.useDirectAlsa
+            useDirectAlsa = activeConfig.useDirectAlsa,
+            useLowLatencyAudioTrack = activeConfig.useLowLatencyAudioTrack,
+            forceStereoRouteAssist = activeConfig.forceStereoRouteAssist,
+            directAlsaPcmDevice = activeConfig.directAlsaPcmDevice
         )
     }
 
@@ -445,7 +454,10 @@ private fun AudioRepeaterApp(debugAudioConfig: DebugAudioConfig? = null) {
                             sameFileDelayMillis = sameFileDelayMillis ?: 0L,
                             differentFileDelayMillis = differentFileDelayMillis ?: 0L,
                             useAaudioExclusive = useAaudioExclusive,
-                            useDirectAlsa = useDirectAlsa
+                            useDirectAlsa = useDirectAlsa,
+                            useLowLatencyAudioTrack = false,
+                            forceStereoRouteAssist = false,
+                            directAlsaPcmDevice = null
                         )
                     },
                     enabled = canPlay
@@ -702,7 +714,10 @@ private data class DebugAudioConfig(
     val sameFileDelaySeconds: String,
     val differentFileDelaySeconds: String,
     val useAaudioExclusive: Boolean,
-    val useDirectAlsa: Boolean
+    val useDirectAlsa: Boolean,
+    val useLowLatencyAudioTrack: Boolean,
+    val forceStereoRouteAssist: Boolean,
+    val directAlsaPcmDevice: Int?
 ) {
     companion object {
         fun from(intent: Intent): DebugAudioConfig? {
@@ -715,7 +730,17 @@ private data class DebugAudioConfig(
                 sameFileDelaySeconds = intent.getStringExtra(DEBUG_SAME_DELAY_EXTRA) ?: "0",
                 differentFileDelaySeconds = intent.getStringExtra(DEBUG_DIFFERENT_DELAY_EXTRA) ?: "0",
                 useAaudioExclusive = intent.getBooleanExtra(DEBUG_AAUDIO_EXCLUSIVE_EXTRA, false),
-                useDirectAlsa = intent.getBooleanExtra(DEBUG_DIRECT_ALSA_EXTRA, false)
+                useDirectAlsa = intent.getBooleanExtra(DEBUG_DIRECT_ALSA_EXTRA, false),
+                useLowLatencyAudioTrack =
+                    intent.getBooleanExtra(DEBUG_LOW_LATENCY_AUDIOTRACK_EXTRA, false),
+                forceStereoRouteAssist =
+                    intent.getBooleanExtra(DEBUG_FORCE_STEREO_ROUTE_ASSIST_EXTRA, false),
+                directAlsaPcmDevice = if (intent.hasExtra(DEBUG_DIRECT_ALSA_PCM_DEVICE_EXTRA)) {
+                    intent.getIntExtra(DEBUG_DIRECT_ALSA_PCM_DEVICE_EXTRA, -1)
+                        .takeIf { device -> device >= 0 }
+                } else {
+                    null
+                }
             )
         }
     }
@@ -1009,37 +1034,64 @@ private data class RootAlsaProfile(
     }
 
     companion object {
-        fun current(): RootAlsaProfile {
+        fun current(requestedPcmDevice: Int? = null): RootAlsaProfile {
             return when (Build.DEVICE) {
-                "flame" -> RootAlsaProfile(
-                    label = "Pixel 4 flame MultiMedia5",
-                    expectedDevice = "flame",
-                    card = 0,
-                    pcmDevice = 13,
-                    pcmNode = "/dev/snd/pcmC0D13p",
-                    periodSize = 240,
-                    periodCount = 2,
-                    tinymixPath = "/data/local/tmp/pixel4_alsa/tinymix",
-                    routeQueryCommand = "/data/local/tmp/pixel4_alsa/tinymix -D 0 1611",
-                    routeEnableCommand = "/data/local/tmp/pixel4_alsa/tinymix -D 0 1611 1 0",
-                    routeDisableCommand = "/data/local/tmp/pixel4_alsa/tinymix -D 0 1611 0 0"
-                )
-                "b2q" -> RootAlsaProfile(
-                    label = "ZFlip3 b2q MultiMedia5",
-                    expectedDevice = "b2q",
-                    card = 0,
-                    pcmDevice = 9,
-                    pcmNode = "/dev/snd/pcmC0D9p",
-                    periodSize = 256,
-                    periodCount = 4,
-                    tinymixPath = "/data/local/tmp/a2m_tinyalsa_postroot/tinymix",
-                    routeQueryCommand =
-                        "/data/local/tmp/a2m_tinyalsa_postroot/tinymix -D 0 get 2434",
-                    routeEnableCommand =
-                        "/data/local/tmp/a2m_tinyalsa_postroot/tinymix -D 0 set 2434 1 0",
-                    routeDisableCommand =
-                        "/data/local/tmp/a2m_tinyalsa_postroot/tinymix -D 0 set 2434 0 0"
-                )
+                "flame" -> {
+                    require(requestedPcmDevice == null || requestedPcmDevice == 13) {
+                        "Pixel 4 direct ALSA only supports PCM13"
+                    }
+                    RootAlsaProfile(
+                        label = "Pixel 4 flame MultiMedia5",
+                        expectedDevice = "flame",
+                        card = 0,
+                        pcmDevice = 13,
+                        pcmNode = "/dev/snd/pcmC0D13p",
+                        periodSize = 240,
+                        periodCount = 2,
+                        tinymixPath = "/data/local/tmp/pixel4_alsa/tinymix",
+                        routeQueryCommand = "/data/local/tmp/pixel4_alsa/tinymix -D 0 1611",
+                        routeEnableCommand = "/data/local/tmp/pixel4_alsa/tinymix -D 0 1611 1 0",
+                        routeDisableCommand = "/data/local/tmp/pixel4_alsa/tinymix -D 0 1611 0 0"
+                    )
+                }
+                "b2q" -> when (requestedPcmDevice ?: 9) {
+                    0 -> RootAlsaProfile(
+                        label = "ZFlip3 b2q MultiMedia1",
+                        expectedDevice = "b2q",
+                        card = 0,
+                        pcmDevice = 0,
+                        pcmNode = "/dev/snd/pcmC0D0p",
+                        periodSize = 192,
+                        periodCount = 4,
+                        tinymixPath = "/data/local/tmp/a2m_tinyalsa_postroot/tinymix",
+                        routeQueryCommand =
+                            "/data/local/tmp/a2m_tinyalsa_postroot/tinymix -D 0 get 2430",
+                        routeEnableCommand =
+                            "/data/local/tmp/a2m_tinyalsa_postroot/tinymix -D 0 set 2430 1 0",
+                        routeDisableCommand =
+                            "/data/local/tmp/a2m_tinyalsa_postroot/tinymix -D 0 set 2430 0 0"
+                    )
+                    9 -> RootAlsaProfile(
+                        label = "ZFlip3 b2q MultiMedia5",
+                        expectedDevice = "b2q",
+                        card = 0,
+                        pcmDevice = 9,
+                        pcmNode = "/dev/snd/pcmC0D9p",
+                        periodSize = 256,
+                        periodCount = 4,
+                        tinymixPath = "/data/local/tmp/a2m_tinyalsa_postroot/tinymix",
+                        routeQueryCommand =
+                            "/data/local/tmp/a2m_tinyalsa_postroot/tinymix -D 0 get 2434",
+                        routeEnableCommand =
+                            "/data/local/tmp/a2m_tinyalsa_postroot/tinymix -D 0 set 2434 1 0",
+                        routeDisableCommand =
+                            "/data/local/tmp/a2m_tinyalsa_postroot/tinymix -D 0 set 2434 0 0"
+                    )
+                    else -> error(
+                        "ZFlip3 direct ALSA experimental PCM must be 0 or 9: " +
+                            requestedPcmDevice
+                    )
+                }
                 else -> error(
                     "Direct ALSA는 검증된 Pixel 4(flame)와 ZFlip3(b2q)에서만 지원합니다: " +
                         "${Build.MODEL}/${Build.DEVICE}"
@@ -1095,7 +1147,10 @@ private class AudioQueuePlayer(
         sameFileDelayMillis: Long,
         differentFileDelayMillis: Long,
         useAaudioExclusive: Boolean,
-        useDirectAlsa: Boolean
+        useDirectAlsa: Boolean,
+        useLowLatencyAudioTrack: Boolean,
+        forceStereoRouteAssist: Boolean,
+        directAlsaPcmDevice: Int?
     ) {
         stop()
         if (items.isEmpty()) return
@@ -1110,7 +1165,10 @@ private class AudioQueuePlayer(
                 sameFileDelayMillis = sameFileDelayMillis,
                 differentFileDelayMillis = differentFileDelayMillis,
                 useAaudioExclusive = useAaudioExclusive,
-                useDirectAlsa = useDirectAlsa
+                useDirectAlsa = useDirectAlsa,
+                useLowLatencyAudioTrack = useLowLatencyAudioTrack,
+                forceStereoRouteAssist = forceStereoRouteAssist,
+                directAlsaPcmDevice = directAlsaPcmDevice
             )
         }
     }
@@ -1135,11 +1193,15 @@ private class AudioQueuePlayer(
         sameFileDelayMillis: Long,
         differentFileDelayMillis: Long,
         useAaudioExclusive: Boolean,
-        useDirectAlsa: Boolean
+        useDirectAlsa: Boolean,
+        useLowLatencyAudioTrack: Boolean,
+        forceStereoRouteAssist: Boolean,
+        directAlsaPcmDevice: Int?
     ) {
         val requestedPath = when {
             useDirectAlsa -> "Direct ALSA"
             useAaudioExclusive -> "AAudio EXCLUSIVE"
+            useLowLatencyAudioTrack -> "AudioTrack LOW_LATENCY"
             else -> "AudioTrack"
         }
         Log.i(
@@ -1183,7 +1245,9 @@ private class AudioQueuePlayer(
                         runId = runId,
                         item = item,
                         wavSpec = spec,
-                        sameFileDelayMillis = sameFileDelayMillis
+                        sameFileDelayMillis = sameFileDelayMillis,
+                        forceStereoRouteAssist = forceStereoRouteAssist,
+                        directAlsaPcmDevice = directAlsaPcmDevice
                     )
                 } else if (useAaudioExclusive) {
                     val spec = checkNotNull(wavSpec)
@@ -1200,7 +1264,8 @@ private class AudioQueuePlayer(
                                 runId = runId,
                                 item = item,
                                 wavSpec = spec,
-                                sameFileDelayMillis = sameFileDelayMillis
+                                sameFileDelayMillis = sameFileDelayMillis,
+                                useLowLatency = useLowLatencyAudioTrack
                             )
                         }.onFailure { exception ->
                             if (!stopped) {
@@ -1321,14 +1386,20 @@ private class AudioQueuePlayer(
         runId: Int,
         item: QueueItem,
         wavSpec: WavPcmSpec,
-        sameFileDelayMillis: Long
+        sameFileDelayMillis: Long,
+        useLowLatency: Boolean
     ) {
-        val audioTrack = createPcm16AudioTrack(wavSpec)
+        val audioTrack = createPcm16AudioTrack(wavSpec, useLowLatency)
         currentTrack = audioTrack
 
         try {
-            postPathStatus("실제: AudioTrack", runId)
-            Log.i(LOG_TAG, "AudioTrack stream start file=${item.displayName} repeats=${item.repeatCount} state=${audioTrack.state}")
+            val pathLabel = if (useLowLatency) "AudioTrack LOW_LATENCY" else "AudioTrack"
+            postPathStatus("실제: $pathLabel", runId)
+            Log.i(
+                LOG_TAG,
+                "$pathLabel stream start file=${item.displayName} repeats=${item.repeatCount} " +
+                    "state=${audioTrack.state} performanceMode=${audioTrack.performanceMode}"
+            )
             audioTrack.play()
 
             var framesWritten = 0L
@@ -1492,16 +1563,29 @@ private class AudioQueuePlayer(
         runId: Int,
         item: QueueItem,
         wavSpec: WavPcmSpec,
-        sameFileDelayMillis: Long
+        sameFileDelayMillis: Long,
+        forceStereoRouteAssist: Boolean,
+        directAlsaPcmDevice: Int?
     ) {
-        val profile = RootAlsaProfile.current()
+        val profile = RootAlsaProfile.current(directAlsaPcmDevice)
         val aggregateWav = prepareRootAlsaAggregateWav(
             runId = runId,
             item = item,
             wavSpec = wavSpec,
             sameFileDelayMillis = sameFileDelayMillis
         )
-        val routeAssistTrack = createSilentRouteAssistTrack(wavSpec)
+        val routeAssistChannelCount = if (forceStereoRouteAssist) 2 else wavSpec.channelCount
+        val routeAssistChannelMask = if (forceStereoRouteAssist) {
+            AudioFormat.CHANNEL_OUT_STEREO
+        } else {
+            wavSpec.channelMask
+        }
+        val routeAssistTrack = createSilentRouteAssistTrack(
+            sampleRate = wavSpec.sampleRate,
+            channelMask = routeAssistChannelMask,
+            channelCount = routeAssistChannelCount,
+            lowLatency = profile.expectedDevice == "b2q" && profile.pcmDevice == 0
+        )
         currentRouteAssistTrack = routeAssistTrack
         currentRootAlsaProfile = profile
         var rootOutput = ""
@@ -1509,12 +1593,17 @@ private class AudioQueuePlayer(
         try {
             postPathStatus("준비: 무음 AudioTrack으로 speaker route 활성화", runId)
             routeAssistTrack.play()
-            val routeAssistThread = startSilentRouteAssistWriter(routeAssistTrack, wavSpec)
+            val routeAssistThread = startSilentRouteAssistWriter(
+                audioTrack = routeAssistTrack,
+                sampleRate = wavSpec.sampleRate,
+                channelCount = routeAssistChannelCount
+            )
             currentRouteAssistThread = routeAssistThread
             Log.i(
                 LOG_TAG,
                 "ALSA route assist started payload=silence-only sampleRate=${wavSpec.sampleRate} " +
-                    "channels=${wavSpec.channelCount}"
+                    "channels=$routeAssistChannelCount forcedStereo=$forceStereoRouteAssist " +
+                    "lowLatency=${profile.expectedDevice == "b2q" && profile.pcmDevice == 0}"
             )
             Thread.sleep(ROOT_ALSA_ROUTE_STARTUP_MILLIS)
             if (stopped) return
@@ -1738,18 +1827,27 @@ private class AudioQueuePlayer(
         return silenceFrameCount - remainingFrames
     }
 
-    private fun createSilentRouteAssistTrack(wavSpec: WavPcmSpec): AudioTrack {
+    private fun createSilentRouteAssistTrack(
+        sampleRate: Int,
+        channelMask: Int,
+        channelCount: Int,
+        lowLatency: Boolean
+    ): AudioTrack {
         val minBufferSize = AudioTrack.getMinBufferSize(
-            wavSpec.sampleRate,
-            wavSpec.channelMask,
+            sampleRate,
+            channelMask,
             AudioFormat.ENCODING_PCM_16BIT
         )
         if (minBufferSize <= 0) {
             error("Invalid silent route-assist buffer size: $minBufferSize")
         }
-        val frameSize = wavSpec.channelCount * PCM_16BIT_BYTES_PER_SAMPLE
-        val bufferSize = maxOf(minBufferSize, wavSpec.sampleRate * frameSize / 10)
-        val audioTrack = AudioTrack.Builder()
+        val frameSize = channelCount * PCM_16BIT_BYTES_PER_SAMPLE
+        val bufferSize = if (lowLatency) {
+            minBufferSize
+        } else {
+            maxOf(minBufferSize, sampleRate * frameSize / 10)
+        }
+        val builder = AudioTrack.Builder()
             .setAudioAttributes(
                 AudioAttributes.Builder()
                     .setUsage(AudioAttributes.USAGE_MEDIA)
@@ -1759,13 +1857,16 @@ private class AudioQueuePlayer(
             .setAudioFormat(
                 AudioFormat.Builder()
                     .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                    .setSampleRate(wavSpec.sampleRate)
-                    .setChannelMask(wavSpec.channelMask)
+                    .setSampleRate(sampleRate)
+                    .setChannelMask(channelMask)
                     .build()
             )
             .setBufferSizeInBytes(bufferSize)
             .setTransferMode(AudioTrack.MODE_STREAM)
-            .build()
+        if (lowLatency) {
+            builder.setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY)
+        }
+        val audioTrack = builder.build()
         if (audioTrack.state != AudioTrack.STATE_INITIALIZED) {
             audioTrack.release()
             error("Silent route-assist AudioTrack initialization failed")
@@ -1775,10 +1876,11 @@ private class AudioQueuePlayer(
 
     private fun startSilentRouteAssistWriter(
         audioTrack: AudioTrack,
-        wavSpec: WavPcmSpec
+        sampleRate: Int,
+        channelCount: Int
     ): Thread {
-        val frameSize = wavSpec.channelCount * PCM_16BIT_BYTES_PER_SAMPLE
-        val buffer = ByteArray(maxOf(1, wavSpec.sampleRate / 20) * frameSize)
+        val frameSize = channelCount * PCM_16BIT_BYTES_PER_SAMPLE
+        val buffer = ByteArray(maxOf(1, sampleRate / 20) * frameSize)
         return Thread(
             {
                 while (!stopped && currentRouteAssistTrack === audioTrack) {
@@ -2102,7 +2204,10 @@ private class AudioQueuePlayer(
         }
     }
 
-    private fun createPcm16AudioTrack(wavSpec: WavPcmSpec): AudioTrack {
+    private fun createPcm16AudioTrack(
+        wavSpec: WavPcmSpec,
+        useLowLatency: Boolean = false
+    ): AudioTrack {
         val minBufferSize = AudioTrack.getMinBufferSize(
             wavSpec.sampleRate,
             wavSpec.channelMask,
@@ -2113,8 +2218,12 @@ private class AudioQueuePlayer(
         }
 
         val pcm16BytesPerSecond = wavSpec.sampleRate * wavSpec.channelCount * PCM_16BIT_BYTES_PER_SAMPLE
-        val bufferSize = maxOf(minBufferSize, pcm16BytesPerSecond / 10)
-        val audioTrack = AudioTrack.Builder()
+        val bufferSize = if (useLowLatency) {
+            minBufferSize
+        } else {
+            maxOf(minBufferSize, pcm16BytesPerSecond / 10)
+        }
+        val builder = AudioTrack.Builder()
             .setAudioAttributes(
                 AudioAttributes.Builder()
                     .setUsage(AudioAttributes.USAGE_MEDIA)
@@ -2130,7 +2239,10 @@ private class AudioQueuePlayer(
             )
             .setBufferSizeInBytes(bufferSize)
             .setTransferMode(AudioTrack.MODE_STREAM)
-            .build()
+        if (useLowLatency) {
+            builder.setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY)
+        }
+        val audioTrack = builder.build()
 
         if (audioTrack.state != AudioTrack.STATE_INITIALIZED) {
             audioTrack.release()
@@ -2139,7 +2251,8 @@ private class AudioQueuePlayer(
         Log.i(
             LOG_TAG,
             "AudioTrack created sampleRate=${wavSpec.sampleRate} channelMask=${wavSpec.channelMask} " +
-                "encoding=${AudioFormat.ENCODING_PCM_16BIT} bufferSize=$bufferSize"
+                "encoding=${AudioFormat.ENCODING_PCM_16BIT} bufferSize=$bufferSize " +
+                "requestedLowLatency=$useLowLatency actualPerformanceMode=${audioTrack.performanceMode}"
         )
         return audioTrack
     }
@@ -2712,6 +2825,9 @@ private const val DEBUG_SAME_DELAY_EXTRA = "debugSameDelay"
 private const val DEBUG_DIFFERENT_DELAY_EXTRA = "debugDifferentDelay"
 private const val DEBUG_AAUDIO_EXCLUSIVE_EXTRA = "debugUseAaudioExclusive"
 private const val DEBUG_DIRECT_ALSA_EXTRA = "debugUseDirectAlsa"
+private const val DEBUG_LOW_LATENCY_AUDIOTRACK_EXTRA = "debugUseLowLatencyAudioTrack"
+private const val DEBUG_FORCE_STEREO_ROUTE_ASSIST_EXTRA = "debugForceStereoRouteAssist"
+private const val DEBUG_DIRECT_ALSA_PCM_DEVICE_EXTRA = "debugDirectAlsaPcmDevice"
 private const val ROOT_ALSA_CACHE_DIRECTORY_NAME = "root-alsa"
 private const val ROOT_ALSA_TINYPLAY_PATH =
     "/data/local/tmp/audiorepeater_alsa/tinyplay_pcm_write"

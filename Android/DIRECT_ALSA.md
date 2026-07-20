@@ -21,12 +21,30 @@ ADB control:
 --ez debugUseDirectAlsa false
 ```
 
+Controlled ablation extras (ADB-launched tests only):
+
+```text
+--ez debugUseLowLatencyAudioTrack true
+--ez debugForceStereoRouteAssist true
+--ei debugDirectAlsaPcmDevice 0
+--ei debugDirectAlsaPcmDevice 9
+```
+
+`debugUseLowLatencyAudioTrack` requests the AudioTrack low-latency performance
+mode so a framework path can be compared with direct playback on ZFlip3 PCM9.
+`debugForceStereoRouteAssist` keeps the silence-only route helper at PCM16
+stereo while mono/stereo and S16/S24 payloads are varied. On ZFlip3 only,
+`debugDirectAlsaPcmDevice=0` selects the experimental MultiMedia1/PCM0 profile;
+its route helper uses the low-latency PCM9 path so PCM0 remains available for
+the direct payload. Omitting the extra retains the verified normal profile.
+
 Supported device profiles:
 
 | Device | PCM | FE-to-BE route |
 | --- | --- | --- |
 | Pixel 4 (`flame`) | `/dev/snd/pcmC0D13p` | `TERT_TDM_RX_0 Audio Mixer MultiMedia5` |
 | ZFlip3 (`b2q`) | `/dev/snd/pcmC0D9p` | `PRI_TDM_RX_0 Audio Mixer MultiMedia5` |
+| ZFlip3 ablation (`debugDirectAlsaPcmDevice=0`) | `/dev/snd/pcmC0D0p` | `PRI_TDM_RX_0 Audio Mixer MultiMedia1` |
 
 The common helper must be installed at:
 
