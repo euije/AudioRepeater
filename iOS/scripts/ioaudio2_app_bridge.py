@@ -5,9 +5,11 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import pathlib
 import queue
 import socket
+import struct
 import subprocess
 import tempfile
 import threading
@@ -223,6 +225,113 @@ def wav_frames(path: pathlib.Path) -> int:
         return source.getnframes()
 
 
+def read_wav_as_s16_stereo(path: pathlib.Path) -> tuple[bytes, int]:
+    with wave.open(str(path), "rb") as source:
+        channels = source.getnchannels()
+        sample_width = source.getsampwidth()
+        sample_rate = source.getframerate()
+        frame_count = source.getnframes()
+        compression = source.getcomptype()
+        raw = source.readframes(frame_count)
+
+    if compression != "NONE" or sample_rate != SAMPLE_RATE:
+        raise ValueError(
+            f"{path.name}: IOAudio2 requires uncompressed 48 kHz PCM WAV"
+        )
+    if channels not in (1, 2) or sample_width not in (2, 3, 4):
+        raise ValueError(
+            f"{path.name}: only mono/stereo PCM16/24/32 WAV is supported"
+        )
+
+    shift = sample_width * 8 - 16
+    output = bytearray(frame_count * 4)
+    input_offset = 0
+    for frame in range(frame_count):
+        decoded: list[int] = []
+        for _ in range(channels):
+            value = int.from_bytes(
+                raw[input_offset : input_offset + sample_width],
+                byteorder="little",
+                signed=True,
+            )
+            input_offset += sample_width
+            if shift > 0:
+                value >>= shift
+            decoded.append(max(-32768, min(32767, value)))
+        left = decoded[0]
+        right = decoded[0] if channels == 1 else decoded[1]
+        struct.pack_into("<hh", output, frame * 4, left, right)
+    return bytes(output), frame_count
+
+
+def write_silence(
+    destination: wave.Wave_write,
+    frame_count: int,
+) -> None:
+    chunk_frames = SAMPLE_RATE
+    silence_chunk = bytes(chunk_frames * 4)
+    remaining = frame_count
+    while remaining > 0:
+        frames = min(remaining, chunk_frames)
+        destination.writeframesraw(silence_chunk[: frames * 4])
+        remaining -= frames
+
+
+def build_timeline_wav(
+    staged_items: list[tuple[dict[str, Any], pathlib.Path]],
+    same_file_delay_seconds: float,
+    different_file_delay_seconds: float,
+    destination: pathlib.Path,
+) -> tuple[list[dict[str, Any]], int]:
+    same_delay_frames = round(same_file_delay_seconds * SAMPLE_RATE)
+    different_delay_frames = round(
+        different_file_delay_seconds * SAMPLE_RATE
+    )
+    events: list[dict[str, Any]] = []
+    cursor = STATIC_SOURCE_OFFSET_FRAMES
+
+    with wave.open(str(destination), "wb") as output:
+        output.setnchannels(2)
+        output.setsampwidth(2)
+        output.setframerate(SAMPLE_RATE)
+        write_silence(output, STATIC_SOURCE_OFFSET_FRAMES)
+
+        for item_index, (item, local_wav) in enumerate(staged_items):
+            pcm, source_frames = read_wav_as_s16_stereo(local_wav)
+            repeat_count = int(item["repeatCount"])
+            if repeat_count <= 0:
+                raise ValueError("repeatCount must be positive")
+            repeat_interval_seconds = (
+                source_frames + same_delay_frames
+            ) / SAMPLE_RATE
+
+            for repeat_index in range(repeat_count):
+                events.append(
+                    {
+                        "startFrame": cursor,
+                        "itemKey": str(item["itemKey"]),
+                        "displayName": str(item["displayName"]),
+                        "currentRepeat": repeat_index + 1,
+                        "totalRepeats": repeat_count,
+                        "repeatIntervalSeconds":
+                            repeat_interval_seconds,
+                    }
+                )
+                output.writeframesraw(pcm)
+                cursor += source_frames
+                if repeat_index < repeat_count - 1:
+                    write_silence(output, same_delay_frames)
+                    cursor += same_delay_frames
+
+            if item_index < len(staged_items) - 1:
+                write_silence(output, different_delay_frames)
+                cursor += different_delay_frames
+
+        output.writeframes(b"")
+
+    return events, cursor
+
+
 def stream_output(
     process: subprocess.Popen[str],
     output_queue: queue.Queue[str],
@@ -240,8 +349,12 @@ def injector_command(
     wav: pathlib.Path,
     repeat_count: int,
     injector_log: pathlib.Path,
+    *,
+    gap_seconds: float = 0,
+    lead_in_seconds: float = 0,
+    static_ring: bool = True,
 ) -> list[str]:
-    return [
+    command = [
         str(PYTHON),
         str(INJECTOR),
         str(wav),
@@ -258,23 +371,31 @@ def injector_command(
         "--repeat-count",
         str(repeat_count),
         "--gap-seconds",
-        "0",
+        format(gap_seconds, ".9f"),
+        "--lead-in-seconds",
+        format(lead_in_seconds, ".9f"),
         "--gain",
         "1",
         "--media-volume",
         "1",
         "--overwrite-interval-ms",
         "1",
-        "--static-ring-frames",
-        str(STATIC_RING_FRAMES),
-        "--static-source-offset-frames",
-        str(STATIC_SOURCE_OFFSET_FRAMES),
         "--keepalive-path",
         KEEPALIVE,
         "--emit-keepalive-output",
         "--log",
         str(injector_log),
     ]
+    if static_ring:
+        command.extend(
+            [
+                "--static-ring-frames",
+                str(STATIC_RING_FRAMES),
+                "--static-source-offset-frames",
+                str(STATIC_SOURCE_OFFSET_FRAMES),
+            ]
+        )
+    return command
 
 
 def play_item(
@@ -359,7 +480,9 @@ def play_item(
                         displayName=display_name,
                         currentRepeat=current_repeat,
                         totalRepeats=repeat_count,
-                        startedAtUnixSeconds=started_epoch,
+                        startedAtUnixSeconds=(
+                            started_epoch + SOURCE_OFFSET_SECONDS
+                        ),
                         repeatIntervalSeconds=RING_SECONDS,
                         message=(
                             f"{display_name} "
@@ -383,6 +506,124 @@ def play_item(
     return True
 
 
+def play_timeline(
+    request_id: str,
+    timeline_wav: pathlib.Path,
+    events: list[dict[str, Any]],
+    run_directory: pathlib.Path,
+) -> bool:
+    injector_log = run_directory / "timeline.injector.jsonl"
+    stdout_log = run_directory / "timeline.stdout.log"
+    process = subprocess.Popen(
+        injector_command(
+            timeline_wav,
+            1,
+            injector_log,
+            static_ring=False,
+        ),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+    )
+    output_queue: queue.Queue[str] = queue.Queue()
+    output_thread = threading.Thread(
+        target=stream_output,
+        args=(process, output_queue, stdout_log),
+        daemon=True,
+    )
+    output_thread.start()
+
+    started_at: float | None = None
+    started_epoch: float | None = None
+    last_event_index = -1
+    last_cancel_poll = 0.0
+    try:
+        while process.poll() is None:
+            now = time.monotonic()
+            try:
+                while True:
+                    line = output_queue.get_nowait()
+                    if (
+                        '"event":"started"' in line
+                        and started_at is None
+                    ):
+                        started_at = time.monotonic()
+                        started_epoch = time.time()
+            except queue.Empty:
+                pass
+
+            if now - last_cancel_poll >= 0.5:
+                last_cancel_poll = now
+                if read_cancel_request(request_id):
+                    process.terminate()
+                    try:
+                        process.wait(timeout=3)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                    return False
+
+            if started_at is not None and events:
+                assert started_epoch is not None
+                elapsed_frames = max(
+                    0,
+                    int((now - started_at) * SAMPLE_RATE),
+                )
+                event_index = last_event_index
+                while (
+                    event_index + 1 < len(events)
+                    and int(events[event_index + 1]["startFrame"])
+                        <= elapsed_frames
+                ):
+                    event_index += 1
+
+                if event_index != last_event_index:
+                    last_event_index = event_index
+                    event = events[event_index]
+                    repeat_interval = float(
+                        event["repeatIntervalSeconds"]
+                    )
+                    item_start_frame = int(event["startFrame"]) - round(
+                        (int(event["currentRepeat"]) - 1)
+                        * repeat_interval
+                        * SAMPLE_RATE
+                    )
+                    write_status(
+                        request_id,
+                        "playing",
+                        itemKey=event["itemKey"],
+                        displayName=event["displayName"],
+                        currentRepeat=event["currentRepeat"],
+                        totalRepeats=event["totalRepeats"],
+                        startedAtUnixSeconds=(
+                            started_epoch
+                            + item_start_frame / SAMPLE_RATE
+                        ),
+                        repeatIntervalSeconds=repeat_interval,
+                        message=(
+                            f"{event['displayName']} "
+                            f"{event['currentRepeat']}/"
+                            f"{event['totalRepeats']}"
+                        ),
+                    )
+            time.sleep(0.02)
+    finally:
+        if process.poll() is None:
+            process.kill()
+        output_thread.join(timeout=2)
+
+    if process.returncode != 0:
+        detail = stdout_log.read_text(
+            encoding="utf-8",
+            errors="replace",
+        )[-2_000:]
+        raise RuntimeError(
+            f"IOAudio2 timeline injector failed "
+            f"({process.returncode}): {detail}"
+        )
+    return True
+
+
 def validate_request(request: dict[str, Any]) -> None:
     if request.get("schema") != "audiorepeater_ioaudio2_request_v1":
         raise ValueError("unsupported request schema")
@@ -395,6 +636,15 @@ def validate_request(request: dict[str, Any]) -> None:
         for key in ("itemKey", "fileName", "displayName", "repeatCount"):
             if key not in item:
                 raise ValueError(f"item is missing {key}")
+        if int(item["repeatCount"]) <= 0:
+            raise ValueError("repeatCount must be positive")
+    for key in (
+        "sameFileDelaySeconds",
+        "differentFileDelaySeconds",
+    ):
+        value = float(request.get(key, 0))
+        if not math.isfinite(value) or value < 0:
+            raise ValueError(f"{key} must be finite and non-negative")
 
 
 def process_request(request: dict[str, Any]) -> None:
@@ -415,12 +665,19 @@ def process_request(request: dict[str, Any]) -> None:
         message="c0004 IOAudio2 ring 준비 중",
     )
     ensure_frida_tunnel()
+    same_file_delay_seconds = float(
+        request.get("sameFileDelaySeconds", 0)
+    )
+    different_file_delay_seconds = float(
+        request.get("differentFileDelaySeconds", 0)
+    )
 
     with tempfile.TemporaryDirectory(
         prefix="a2m-ioaudio2-",
         dir=run_directory,
     ) as temporary:
         temporary_root = pathlib.Path(temporary)
+        staged_items: list[tuple[dict[str, Any], pathlib.Path]] = []
         for index, item in enumerate(request["items"]):
             if read_cancel_request(request_id):
                 write_status(request_id, "cancelled", message="재생 정지됨")
@@ -428,30 +685,48 @@ def process_request(request: dict[str, Any]) -> None:
 
             local_wav = temporary_root / f"{index:02d}.wav"
             fetch_wav(str(item["fileName"]), local_wav)
-            if not play_item(
+            staged_items.append((item, local_wav))
+
+        use_static_single = (
+            len(staged_items) == 1
+            and same_file_delay_seconds == 0
+        )
+        if use_static_single:
+            item, local_wav = staged_items[0]
+            completed = play_item(
                 request_id,
                 item,
                 local_wav,
                 run_directory,
-            ):
-                write_status(request_id, "cancelled", message="재생 정지됨")
-                return
+            )
+        else:
+            timeline_wav = temporary_root / "request-timeline.wav"
+            events, timeline_frames = build_timeline_wav(
+                staged_items,
+                same_file_delay_seconds,
+                different_file_delay_seconds,
+                timeline_wav,
+            )
+            logging.info(
+                "timeline request=%s frames=%s duration=%.6f "
+                "sameDelay=%.6f differentDelay=%.6f events=%s",
+                request_id,
+                timeline_frames,
+                timeline_frames / SAMPLE_RATE,
+                same_file_delay_seconds,
+                different_file_delay_seconds,
+                len(events),
+            )
+            completed = play_timeline(
+                request_id,
+                timeline_wav,
+                events,
+                run_directory,
+            )
 
-            if index < len(request["items"]) - 1:
-                delay = max(
-                    0.0,
-                    float(request.get("differentFileDelaySeconds", 0)),
-                )
-                deadline = time.monotonic() + delay
-                while time.monotonic() < deadline:
-                    if read_cancel_request(request_id):
-                        write_status(
-                            request_id,
-                            "cancelled",
-                            message="재생 정지됨",
-                        )
-                        return
-                    time.sleep(min(0.1, deadline - time.monotonic()))
+        if not completed:
+            write_status(request_id, "cancelled", message="재생 정지됨")
+            return
 
     write_status(request_id, "complete", message="재생 완료")
 
