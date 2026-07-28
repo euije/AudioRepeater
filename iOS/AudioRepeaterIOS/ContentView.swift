@@ -3,6 +3,9 @@ import SwiftUI
 
 struct ContentView: View {
     @StateObject private var player = AudioQueuePlayer()
+    @StateObject private var ioAudio2Bridge = IOAudio2BridgeController()
+    @AppStorage("ioAudio2RingOverwriteEnabled")
+    private var ioAudio2RingOverwriteEnabled = true
     @State private var items: [AudioItem] = []
     @State private var defaultRepeatText = "1"
     @State private var sameFileDelayText = "0"
@@ -10,7 +13,6 @@ struct ContentView: View {
     @State private var isImporterPresented = false
     @State private var isImporting = false
     @State private var alertMessage: String?
-    @State private var didCheckRemotePlaybackRequest = false
 
     private var defaultRepeat: Int? {
         positiveInt(defaultRepeatText)
@@ -24,8 +26,16 @@ struct ContentView: View {
         delaySeconds(differentFileDelayText)
     }
 
+    private var isPlaybackRunning: Bool {
+        player.state.isRunning || ioAudio2Bridge.state.isRunning
+    }
+
+    private var activePlaybackState: PlaybackState {
+        ioAudio2Bridge.state.isRunning ? ioAudio2Bridge.state : player.state
+    }
+
     private var canPlay: Bool {
-        !player.state.isRunning &&
+        !isPlaybackRunning &&
             !isImporting &&
             !items.isEmpty &&
             sameFileDelay != nil &&
@@ -58,8 +68,13 @@ struct ContentView: View {
             .onReceive(player.$errorMessage.compactMap { $0 }) { message in
                 alertMessage = message
             }
+            .onReceive(ioAudio2Bridge.$errorMessage.compactMap { $0 }) { message in
+                alertMessage = message
+            }
             .task {
-                consumeRemotePlaybackRequestIfPresent()
+                loadPinnedLibraryIfPresent()
+                ioAudio2Bridge.resumeMonitoringIfNeeded()
+                await monitorRemotePlaybackRequests()
             }
             .onDisappear {
                 player.stop()
@@ -69,40 +84,137 @@ struct ContentView: View {
     }
 
     @MainActor
-    private func consumeRemotePlaybackRequestIfPresent() {
-        guard !didCheckRemotePlaybackRequest else { return }
-        didCheckRemotePlaybackRequest = true
+    private func loadPinnedLibraryIfPresent() {
+        guard items.isEmpty else { return }
 
+        do {
+            let fileManager = FileManager.default
+            let documentsURL = try fileManager.url(
+                for: .documentDirectory,
+                in: .userDomainMask,
+                appropriateFor: nil,
+                create: true
+            )
+            let audioDirectoryURL = documentsURL.appendingPathComponent(
+                "RemoteAudio",
+                isDirectory: true
+            )
+            let pinnedURLs = try fileManager.contentsOfDirectory(
+                at: audioDirectoryURL,
+                includingPropertiesForKeys: nil,
+                options: [.skipsHiddenFiles]
+            )
+            .filter {
+                $0.pathExtension.lowercased() == "wav" &&
+                    $0.lastPathComponent.hasPrefix("pinned_")
+            }
+            .sorted {
+                $0.lastPathComponent.localizedStandardCompare(
+                    $1.lastPathComponent
+                ) == .orderedAscending
+            }
+
+            guard !pinnedURLs.isEmpty else { return }
+            items = pinnedURLs.map { url in
+                let stem = url.deletingPathExtension().lastPathComponent
+                let displayName = String(stem.dropFirst("pinned_".count))
+                    .replacingOccurrences(of: "_", with: " ")
+                return AudioItem(
+                    sourceURL: url,
+                    localURL: url,
+                    displayName: displayName,
+                    repeatText: defaultRepeatText,
+                    deleteLocalFileOnRemove: false
+                )
+            }
+            print("AudioRepeaterIOS pinned library loaded items=\(items.count)")
+            let receipt: [String: Any] = [
+                "schema": "audiorepeater_pinned_library_v1",
+                "loadedAt": ISO8601DateFormatter().string(from: Date()),
+                "itemCount": items.count,
+                "displayNames": items.map(\.displayName),
+                "fileNames": pinnedURLs.map(\.lastPathComponent),
+            ]
+            let receiptData = try JSONSerialization.data(
+                withJSONObject: receipt,
+                options: [.prettyPrinted, .sortedKeys]
+            )
+            try receiptData.write(
+                to: documentsURL.appendingPathComponent(
+                    "pinned-library-status.json",
+                    isDirectory: false
+                ),
+                options: .atomic
+            )
+        } catch CocoaError.fileNoSuchFile {
+            return
+        } catch {
+            alertMessage = error.localizedDescription
+            print(
+                "AudioRepeaterIOS pinned library error " +
+                    error.localizedDescription
+            )
+        }
+    }
+
+    @MainActor
+    private func monitorRemotePlaybackRequests() async {
+        while !Task.isCancelled {
+            // The IOAudio2 bridge still needs AudioRepeater's silent
+            // AVAudioEngine keepalive while ring overwrite is active.
+            if !player.state.isRunning {
+                consumeRemotePlaybackRequestIfPresent()
+            }
+            do {
+                try await Task.sleep(nanoseconds: 100_000_000)
+            } catch {
+                return
+            }
+        }
+    }
+
+    @MainActor
+    private func consumeRemotePlaybackRequestIfPresent() {
         do {
             guard let request = try RemotePlaybackRequestLoader.consumeIfPresent() else {
                 return
             }
 
-            items = request.queueItems.map { item in
-                AudioItem(
-                    sourceURL: item.sourceURL,
-                    localURL: item.localURL,
-                    displayName: item.displayName,
-                    repeatText: String(item.repeatCount),
-                    deleteLocalFileOnRemove: false
-                )
+            let isRingKeepalive = request.queueItems.count == 1 &&
+                request.queueItems[0].displayName ==
+                    "c0004 AudioRepeater ring keepalive"
+            if !isRingKeepalive {
+                items = request.queueItems.map { item in
+                    AudioItem(
+                        sourceURL: item.sourceURL,
+                        localURL: item.localURL,
+                        displayName: item.displayName,
+                        repeatText: String(item.repeatCount),
+                        deleteLocalFileOnRemove: false
+                    )
+                }
+                if let firstRepeat = request.queueItems.first?.repeatCount,
+                   request.queueItems.allSatisfy({ $0.repeatCount == firstRepeat }) {
+                    defaultRepeatText = String(firstRepeat)
+                }
+                sameFileDelayText = delayText(request.sameFileDelaySeconds)
+                differentFileDelayText =
+                    delayText(request.differentFileDelaySeconds)
             }
-            if let firstRepeat = request.queueItems.first?.repeatCount,
-               request.queueItems.allSatisfy({ $0.repeatCount == firstRepeat }) {
-                defaultRepeatText = String(firstRepeat)
-            }
-            sameFileDelayText = delayText(request.sameFileDelaySeconds)
-            differentFileDelayText = delayText(request.differentFileDelaySeconds)
 
             print(
                 "AudioRepeaterIOS remote request loaded items=\(request.queueItems.count) " +
                     "sameDelay=\(request.sameFileDelaySeconds) " +
-                    "diffDelay=\(request.differentFileDelaySeconds)"
+                    "diffDelay=\(request.differentFileDelaySeconds) " +
+                    "path=\(request.playbackPath.rawValue) " +
+                    "captureSystemAudio=\(request.captureSystemAudio)"
             )
             player.play(
                 items: request.queueItems,
                 sameFileDelaySeconds: request.sameFileDelaySeconds,
                 differentFileDelaySeconds: request.differentFileDelaySeconds,
+                playbackPath: request.playbackPath,
+                systemAudioCaptureURL: request.systemAudioCaptureURL,
                 eventLogURL: request.eventLogURL
             )
         } catch {
@@ -139,7 +251,7 @@ struct ContentView: View {
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(player.state.isRunning || isImporting || defaultRepeat == nil)
+                .disabled(isPlaybackRunning || isImporting || defaultRepeat == nil)
             }
 
             Button {
@@ -151,7 +263,7 @@ struct ContentView: View {
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.bordered)
-            .disabled(player.state.isRunning || defaultRepeat == nil || items.isEmpty)
+            .disabled(isPlaybackRunning || defaultRepeat == nil || items.isEmpty)
 
             HStack(spacing: 12) {
                 labeledTextField(
@@ -168,50 +280,88 @@ struct ContentView: View {
                     sanitize: sanitizeDelayInput
                 )
             }
+
+            Toggle(isOn: $ioAudio2RingOverwriteEnabled) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("IOAudio2 ring overwrite")
+                        .font(.subheadline.weight(.semibold))
+                    Text(
+                        ioAudio2RingOverwriteEnabled
+                            ? "사용 · c0004 최적화 조건"
+                            : "사용 안 함 · AVAudioEngine"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+            }
+            .toggleStyle(.switch)
+            .tint(.orange)
+            .disabled(isPlaybackRunning)
         }
     }
 
     private var playbackControls: some View {
-        HStack(spacing: 12) {
-            Button {
-                let queueItems = items.compactMap { item -> QueueItem? in
-                    guard let repeatCount = item.repeatCount else { return nil }
-                    return QueueItem(
-                        sourceURL: item.sourceURL,
-                        localURL: item.localURL,
-                        displayName: item.displayName,
-                        repeatCount: repeatCount
+        VStack(spacing: 10) {
+            HStack(spacing: 12) {
+                Button {
+                    let queueItems = items.compactMap { item -> QueueItem? in
+                        guard let repeatCount = item.repeatCount else {
+                            return nil
+                        }
+                        return QueueItem(
+                            itemKey: item.localURL.lastPathComponent,
+                            sourceURL: item.sourceURL,
+                            localURL: item.localURL,
+                            displayName: item.displayName,
+                            repeatCount: repeatCount
+                        )
+                    }
+
+                    if ioAudio2RingOverwriteEnabled {
+                        ioAudio2Bridge.play(
+                            items: queueItems,
+                            sameFileDelaySeconds: sameFileDelay ?? 0,
+                            differentFileDelaySeconds:
+                                differentFileDelay ?? 0
+                        )
+                    } else {
+                        player.play(
+                            items: queueItems,
+                            sameFileDelaySeconds: sameFileDelay ?? 0,
+                            differentFileDelaySeconds:
+                                differentFileDelay ?? 0
+                        )
+                    }
+                } label: {
+                    Label(
+                        ioAudio2RingOverwriteEnabled
+                            ? "IOAudio2 재생"
+                            : "일반 재생",
+                        systemImage: "play.fill"
                     )
+                    .frame(maxWidth: .infinity)
                 }
+                .buttonStyle(.borderedProminent)
+                .tint(ioAudio2RingOverwriteEnabled ? .orange : .blue)
+                .disabled(!canPlay)
 
-                player.play(
-                    items: queueItems,
-                    sameFileDelaySeconds: sameFileDelay ?? 0,
-                    differentFileDelaySeconds: differentFileDelay ?? 0
-                )
-            } label: {
-                Label("재생", systemImage: "play.fill")
-                    .frame(maxWidth: .infinity)
+                Button {
+                    if ioAudio2Bridge.state.isRunning {
+                        ioAudio2Bridge.stop()
+                    }
+                    if player.state.isRunning {
+                        player.stop()
+                    }
+                } label: {
+                    Label("정지", systemImage: "stop.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .disabled(!isPlaybackRunning)
             }
-            .buttonStyle(.borderedProminent)
-            .disabled(!canPlay)
 
-            Button {
-                player.stop()
-            } label: {
-                Label("정지", systemImage: "stop.fill")
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.bordered)
-            .disabled(!player.state.isRunning)
+            playbackStatusCard
         }
-        .overlay(alignment: .bottom) {
-            Text(player.state.statusText)
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .offset(y: 26)
-        }
-        .padding(.bottom, 24)
     }
 
     private var listContent: some View {
@@ -233,8 +383,8 @@ struct ContentView: View {
                     ForEach($items) { $item in
                         AudioItemRow(
                             item: $item,
-                            isPlaying: player.state.isRunning,
-                            isCurrent: isCurrent(item)
+                            isPlaying: isPlaybackRunning,
+                            playbackProgress: playbackProgress(for: item)
                         ) {
                             if let index = items.firstIndex(where: { $0.id == item.id }) {
                                 let removed = items.remove(at: index)
@@ -257,7 +407,7 @@ struct ContentView: View {
         TextField(title, text: text)
             .keyboardType(keyboardType)
             .textFieldStyle(.roundedBorder)
-            .disabled(player.state.isRunning)
+            .disabled(isPlaybackRunning)
             .onChange(of: text.wrappedValue) { newValue in
                 let sanitized = sanitize(newValue)
                 if sanitized != newValue {
@@ -298,11 +448,66 @@ struct ContentView: View {
         }
     }
 
-    private func isCurrent(_ item: AudioItem) -> Bool {
-        if case let .playing(displayName, _, _) = player.state {
-            return displayName == item.displayName
+    private var playbackStatusCard: some View {
+        HStack(spacing: 10) {
+            Image(
+                systemName: isPlaybackRunning
+                    ? "waveform.circle.fill"
+                    : "waveform.circle"
+            )
+            .font(.title3)
+            .foregroundStyle(
+                ioAudio2RingOverwriteEnabled ? .orange : .blue
+            )
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(
+                    ioAudio2RingOverwriteEnabled
+                        ? "IOAudio2 ring overwrite"
+                        : "AVAudioEngine"
+                )
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                Text(activePlaybackState.statusText)
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(2)
+            }
+            Spacer()
         }
-        return false
+        .padding(10)
+        .frame(maxWidth: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(
+                    isPlaybackRunning
+                        ? Color.accentColor.opacity(0.14)
+                        : Color.secondary.opacity(0.08)
+                )
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(
+                    isPlaybackRunning
+                        ? Color.accentColor.opacity(0.7)
+                        : Color.secondary.opacity(0.2),
+                    lineWidth: isPlaybackRunning ? 1.5 : 1
+                )
+        )
+    }
+
+    private func playbackProgress(
+        for item: AudioItem
+    ) -> (current: Int, total: Int)? {
+        if case let .playing(
+            itemKey,
+            _,
+            currentRepeat,
+            totalRepeats
+        ) = activePlaybackState,
+           itemKey == item.localURL.lastPathComponent {
+            return (currentRepeat, totalRepeats)
+        }
+        return nil
     }
 
     private var alertBinding: Binding<Bool> {
@@ -316,22 +521,47 @@ struct ContentView: View {
 private struct AudioItemRow: View {
     @Binding var item: AudioItem
     let isPlaying: Bool
-    let isCurrent: Bool
+    let playbackProgress: (current: Int, total: Int)?
     let onDelete: () -> Void
+
+    private var isCurrent: Bool {
+        playbackProgress != nil
+    }
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: "music.note")
-                .foregroundStyle(isCurrent ? .blue : .secondary)
+            Image(systemName: isCurrent ? "waveform" : "music.note")
+                .font(isCurrent ? .title3 : .body)
+                .foregroundStyle(isCurrent ? .orange : .secondary)
+                .frame(width: 24)
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(item.displayName)
-                    .font(.subheadline)
+                    .font(
+                        isCurrent
+                            ? .subheadline.weight(.bold)
+                            : .subheadline
+                    )
                     .lineLimit(2)
                 Text(item.localURL.lastPathComponent)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                if let playbackProgress {
+                    HStack(spacing: 8) {
+                        Text(
+                            "\(playbackProgress.current) / " +
+                                "\(playbackProgress.total)회 재생 중"
+                        )
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.orange)
+                        ProgressView(
+                            value: Double(playbackProgress.current),
+                            total: Double(playbackProgress.total)
+                        )
+                        .tint(.orange)
+                    }
+                }
             }
 
             Spacer()
@@ -353,8 +583,358 @@ private struct AudioItemRow: View {
             }
             .disabled(isPlaying)
         }
-        .padding(.vertical, 6)
-        .listRowBackground(isCurrent ? Color.blue.opacity(0.08) : Color.clear)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(isCurrent ? Color.orange.opacity(0.18) : Color.clear)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(
+                    isCurrent ? Color.orange : Color.clear,
+                    lineWidth: 2
+                )
+        )
+        .animation(.easeInOut(duration: 0.18), value: isCurrent)
+        .listRowBackground(Color.clear)
+    }
+}
+
+private struct IOAudio2BridgeRequest: Encodable {
+    struct Item: Encodable {
+        let itemKey: String
+        let fileName: String
+        let displayName: String
+        let repeatCount: Int
+    }
+
+    let schema: String
+    let requestID: String
+    let createdAt: String
+    let items: [Item]
+    let sameFileDelaySeconds: Double
+    let differentFileDelaySeconds: Double
+}
+
+private struct IOAudio2BridgeStatus: Decodable {
+    let schema: String
+    let requestID: String
+    let state: String
+    let itemKey: String?
+    let displayName: String?
+    let currentRepeat: Int?
+    let totalRepeats: Int?
+    let message: String?
+    let startedAtUnixSeconds: Double?
+    let repeatIntervalSeconds: Double?
+}
+
+private struct IOAudio2BridgeCancel: Encodable {
+    let schema: String
+    let requestID: String
+    let createdAt: String
+}
+
+@MainActor
+private final class IOAudio2BridgeController: ObservableObject {
+    @Published private(set) var state: PlaybackState = .idle
+    @Published private(set) var errorMessage: String?
+
+    private let activeRequestDefaultsKey =
+        "ioAudio2RingOverwriteActiveRequestID"
+    private let requestFileName = "ioaudio2-playback-request.json"
+    private let statusFileName = "ioaudio2-playback-status.json"
+    private let cancelFileName = "ioaudio2-playback-cancel.json"
+    private var monitorTask: Task<Void, Never>?
+    private var activeRequestID: String?
+
+    func play(
+        items: [QueueItem],
+        sameFileDelaySeconds: Double,
+        differentFileDelaySeconds: Double
+    ) {
+        guard !state.isRunning, !items.isEmpty else { return }
+        errorMessage = nil
+
+        do {
+            let requestID = UUID().uuidString
+            let requestItems = try stageRequestItems(items)
+            let request = IOAudio2BridgeRequest(
+                schema: "audiorepeater_ioaudio2_request_v1",
+                requestID: requestID,
+                createdAt: ISO8601DateFormatter().string(from: Date()),
+                items: requestItems,
+                sameFileDelaySeconds: sameFileDelaySeconds,
+                differentFileDelaySeconds: differentFileDelaySeconds
+            )
+            let fileManager = FileManager.default
+            let urls = try bridgeURLs()
+            try? fileManager.removeItem(at: urls.status)
+            try? fileManager.removeItem(at: urls.cancel)
+            let data = try JSONEncoder().encode(request)
+            try data.write(to: urls.request, options: .atomic)
+
+            activeRequestID = requestID
+            UserDefaults.standard.set(
+                requestID,
+                forKey: activeRequestDefaultsKey
+            )
+            state = .preparing(message: "IOAudio2 브리지 연결 중")
+            startMonitoring(requestID: requestID)
+        } catch {
+            fail(error.localizedDescription)
+        }
+    }
+
+    func stop() {
+        guard let requestID = activeRequestID else {
+            state = .idle
+            return
+        }
+
+        do {
+            let cancel = IOAudio2BridgeCancel(
+                schema: "audiorepeater_ioaudio2_cancel_v1",
+                requestID: requestID,
+                createdAt: ISO8601DateFormatter().string(from: Date())
+            )
+            try JSONEncoder().encode(cancel).write(
+                to: bridgeURLs().cancel,
+                options: .atomic
+            )
+            state = .preparing(message: "IOAudio2 재생 정지 중")
+        } catch {
+            fail(error.localizedDescription)
+        }
+    }
+
+    func resumeMonitoringIfNeeded() {
+        guard activeRequestID == nil,
+              let requestID = UserDefaults.standard.string(
+                  forKey: activeRequestDefaultsKey
+              ),
+              !requestID.isEmpty else {
+            return
+        }
+        activeRequestID = requestID
+        state = .preparing(message: "IOAudio2 재생 상태 복원 중")
+        startMonitoring(requestID: requestID)
+    }
+
+    private func startMonitoring(requestID: String) {
+        monitorTask?.cancel()
+        monitorTask = Task { [weak self] in
+            await self?.monitor(requestID: requestID)
+        }
+    }
+
+    private func monitor(requestID: String) async {
+        var emptyPollCount = 0
+        while !Task.isCancelled, activeRequestID == requestID {
+            do {
+                let statusURL = try bridgeURLs().status
+                guard FileManager.default.fileExists(
+                    atPath: statusURL.path
+                ) else {
+                    emptyPollCount += 1
+                    if emptyPollCount >= 150 {
+                        fail(
+                            "Mac IOAudio2 브리지가 응답하지 않습니다. " +
+                                "Mac과 iPhone 연결을 확인해 주세요."
+                        )
+                        return
+                    }
+                    try await Task.sleep(nanoseconds: 100_000_000)
+                    continue
+                }
+
+                let status = try JSONDecoder().decode(
+                    IOAudio2BridgeStatus.self,
+                    from: Data(contentsOf: statusURL)
+                )
+                guard status.requestID == requestID else {
+                    try await Task.sleep(nanoseconds: 100_000_000)
+                    continue
+                }
+                emptyPollCount = 0
+                if apply(status) {
+                    return
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                emptyPollCount += 1
+                if emptyPollCount >= 150 {
+                    fail(error.localizedDescription)
+                    return
+                }
+            }
+
+            do {
+                try await Task.sleep(nanoseconds: 100_000_000)
+            } catch {
+                return
+            }
+        }
+    }
+
+    private func apply(_ status: IOAudio2BridgeStatus) -> Bool {
+        switch status.state {
+        case "accepted":
+            state = .preparing(
+                message: status.message ?? "IOAudio2 ring 준비 중"
+            )
+            return false
+        case "playing":
+            guard let itemKey = status.itemKey,
+                  let displayName = status.displayName,
+                  let currentRepeat = status.currentRepeat,
+                  let totalRepeats = status.totalRepeats else {
+                return false
+            }
+            var displayedRepeat = currentRepeat
+            if let startedAt = status.startedAtUnixSeconds,
+               let interval = status.repeatIntervalSeconds,
+               interval > 0 {
+                let elapsed = max(
+                    0,
+                    Date().timeIntervalSince1970 - startedAt
+                )
+                let timelineRepeat = Int(elapsed / interval) + 1
+                displayedRepeat = min(
+                    totalRepeats,
+                    max(currentRepeat, timelineRepeat)
+                )
+            }
+            state = .playing(
+                itemKey: itemKey,
+                displayName: displayName,
+                currentRepeat: displayedRepeat,
+                totalRepeats: totalRepeats
+            )
+            return false
+        case "complete":
+            finish()
+            return true
+        case "cancelled":
+            finish()
+            return true
+        case "error":
+            fail(status.message ?? "IOAudio2 재생 중 오류가 발생했습니다.")
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func stageRequestItems(
+        _ items: [QueueItem]
+    ) throws -> [IOAudio2BridgeRequest.Item] {
+        let urls = try bridgeURLs()
+        let fileManager = FileManager.default
+        try fileManager.createDirectory(
+            at: urls.audioDirectory,
+            withIntermediateDirectories: true
+        )
+
+        return try items.map { item in
+            let sourceURL = item.localURL
+            guard sourceURL.pathExtension.lowercased() == "wav",
+                  fileManager.fileExists(atPath: sourceURL.path) else {
+                throw IOAudio2BridgeError.missingWAV(
+                    sourceURL.lastPathComponent
+                )
+            }
+
+            let fileName: String
+            if sourceURL.deletingLastPathComponent().standardizedFileURL ==
+                urls.audioDirectory.standardizedFileURL {
+                fileName = sourceURL.lastPathComponent
+            } else {
+                let safeStem = sourceURL
+                    .deletingPathExtension()
+                    .lastPathComponent
+                    .unicodeScalars
+                    .map { scalar -> Character in
+                        CharacterSet.alphanumerics.contains(scalar)
+                            ? Character(String(scalar))
+                            : "_"
+                    }
+                fileName =
+                    "ioaudio2_\(UUID().uuidString)_\(String(safeStem)).wav"
+                let destination = urls.audioDirectory.appendingPathComponent(
+                    fileName,
+                    isDirectory: false
+                )
+                try fileManager.copyItem(at: sourceURL, to: destination)
+            }
+
+            return IOAudio2BridgeRequest.Item(
+                itemKey: item.itemKey,
+                fileName: fileName,
+                displayName: item.displayName,
+                repeatCount: item.repeatCount
+            )
+        }
+    }
+
+    private func bridgeURLs() throws -> (
+        request: URL,
+        status: URL,
+        cancel: URL,
+        audioDirectory: URL
+    ) {
+        let documentsURL = try FileManager.default.url(
+            for: .documentDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        )
+        return (
+            documentsURL.appendingPathComponent(
+                requestFileName,
+                isDirectory: false
+            ),
+            documentsURL.appendingPathComponent(
+                statusFileName,
+                isDirectory: false
+            ),
+            documentsURL.appendingPathComponent(
+                cancelFileName,
+                isDirectory: false
+            ),
+            documentsURL.appendingPathComponent(
+                "RemoteAudio",
+                isDirectory: true
+            )
+        )
+    }
+
+    private func finish() {
+        monitorTask?.cancel()
+        monitorTask = nil
+        activeRequestID = nil
+        UserDefaults.standard.removeObject(
+            forKey: activeRequestDefaultsKey
+        )
+        state = .idle
+    }
+
+    private func fail(_ message: String) {
+        errorMessage = message
+        finish()
+    }
+}
+
+private enum IOAudio2BridgeError: LocalizedError {
+    case missingWAV(String)
+
+    var errorDescription: String? {
+        switch self {
+        case let .missingWAV(fileName):
+            return "IOAudio2 재생용 WAV 파일이 없습니다: \(fileName)"
+        }
     }
 }
 

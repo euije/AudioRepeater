@@ -12,6 +12,13 @@ param(
     [ValidateRange(0, 86400)]
     [double]$DifferentFileDelaySeconds = 0,
 
+    [ValidateSet("avAudioEngine", "remoteIO")]
+    [string]$PlaybackPath = "avAudioEngine",
+
+    [switch]$CaptureSystemAudio,
+
+    [string]$CaptureOutputPath,
+
     [string]$MacHost = "macbook",
     [string]$MacDeveloperDir = "/Applications/Xcode-beta.app/Contents/Developer",
     [string]$DeviceId = "YOUR_DEVICE_UDID",
@@ -35,6 +42,10 @@ $resolvedFiles = @(foreach ($path in $WavPath) {
     }
     $file
 })
+
+if ($CaptureSystemAudio -and [string]::IsNullOrWhiteSpace($CaptureOutputPath)) {
+    throw "CaptureOutputPath is required when CaptureSystemAudio is enabled."
+}
 
 if ($resolvedFiles.Count -eq 0) {
     throw "At least one WAV file is required."
@@ -98,6 +109,9 @@ try {
         files = $manifestFiles
         sameFileDelaySeconds = $SameFileDelaySeconds
         differentFileDelaySeconds = $DifferentFileDelaySeconds
+        playbackPath = $PlaybackPath
+        captureSystemAudio = [bool]$CaptureSystemAudio
+        systemAudioCaptureFileName = "screen-capture.caf"
     }
     $manifestPath = Join-Path $localStaging "remote-playback.json"
     $manifestJson = $manifest | ConvertTo-Json -Depth 4
@@ -134,6 +148,7 @@ try {
     }
 
     Write-Host "Uploaded $($resolvedFiles.Count) WAV files for remote playback."
+    Write-Host "Playback path: $PlaybackPath; ScreenCaptureKit audio: $([bool]$CaptureSystemAudio)"
     for ($index = 0; $index -lt $resolvedFiles.Count; $index++) {
         Write-Host ("  {0:D3}: {1}" -f ($index + 1), $resolvedFiles[$index].FullName)
     }
@@ -195,6 +210,28 @@ try {
     $finalStatus |
         Where-Object { $_ -match "playQueue start|repeat=$RepeatCount/$RepeatCount|playQueue finish" } |
         ForEach-Object { Write-Host "  $_" }
+
+    if ($CaptureSystemAudio) {
+        if (-not $UseDeviceCtl) {
+            throw "ScreenCaptureKit capture download currently requires UseDeviceCtl."
+        }
+        $digitalAudioUnavailable = @($finalStatus | Where-Object { $_ -match "digitalAudioFile=false" }).Count -gt 0
+        if ($digitalAudioUnavailable) {
+            Write-Warning "ScreenCaptureKit stream was active, but this iOS build returned zero digital audio buffers; no CAF was copied."
+        } else {
+            $captureParent = Split-Path -Parent $CaptureOutputPath
+            if (-not [string]::IsNullOrWhiteSpace($captureParent)) {
+                New-Item -ItemType Directory -Path $captureParent -Force | Out-Null
+            }
+            $remoteCapturePath = "$remoteStaging/screen-capture.caf"
+            Invoke-RemoteCommand "$xcrun devicectl device copy from --device $DeviceId --source Documents/screen-capture.caf --destination $remoteCapturePath $deviceCtlDomain"
+            & scp -- "${MacHost}:$remoteCapturePath" $CaptureOutputPath
+            if ($LASTEXITCODE -ne 0) {
+                throw "Failed to copy ScreenCaptureKit audio to $CaptureOutputPath"
+            }
+            Write-Host "ScreenCaptureKit audio copied to $CaptureOutputPath"
+        }
+    }
 } finally {
     if ($debuggerLauncherStarted) {
         & ssh $MacHost "pkill -f 'ios-deploy --id $DeviceId --bundle .*AudioRepeaterIOS.app --noinstall --debug' 2>/dev/null || true" 2>$null | Out-Null

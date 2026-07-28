@@ -13,6 +13,8 @@
 		000000000000000000000014 /* AudioItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000024 /* AudioItem.swift */; };
 		000000000000000000000015 /* ImportManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000025 /* ImportManager.swift */; };
 		000000000000000000000016 /* RemotePlaybackRequest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000027 /* RemotePlaybackRequest.swift */; };
+		000000000000000000000017 /* RemoteIOPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000028 /* RemoteIOPlayer.swift */; };
+		000000000000000000000018 /* ScreenCaptureAudioRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000029 /* ScreenCaptureAudioRecorder.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -24,6 +26,8 @@
 		000000000000000000000025 /* ImportManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImportManager.swift; sourceTree = "<group>"; };
 		000000000000000000000026 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		000000000000000000000027 /* RemotePlaybackRequest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemotePlaybackRequest.swift; sourceTree = "<group>"; };
+		000000000000000000000028 /* RemoteIOPlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteIOPlayer.swift; sourceTree = "<group>"; };
+		000000000000000000000029 /* ScreenCaptureAudioRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenCaptureAudioRecorder.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -62,6 +66,8 @@
 				000000000000000000000024 /* AudioItem.swift */,
 				000000000000000000000025 /* ImportManager.swift */,
 				000000000000000000000027 /* RemotePlaybackRequest.swift */,
+				000000000000000000000028 /* RemoteIOPlayer.swift */,
+				000000000000000000000029 /* ScreenCaptureAudioRecorder.swift */,
 				000000000000000000000026 /* Info.plist */,
 			);
 			path = AudioRepeaterIOS;
@@ -142,6 +148,8 @@
 				000000000000000000000014 /* AudioItem.swift in Sources */,
 				000000000000000000000015 /* ImportManager.swift in Sources */,
 				000000000000000000000016 /* RemotePlaybackRequest.swift in Sources */,
+				000000000000000000000017 /* RemoteIOPlayer.swift in Sources */,
+				000000000000000000000018 /* ScreenCaptureAudioRecorder.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -274,6 +282,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = AudioRepeater;
+				INFOPLIST_KEY_NSScreenCaptureUsageDescription = "Capture the app audio stream for controlled playback-path measurements.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -307,6 +316,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = AudioRepeater;
+				INFOPLIST_KEY_NSScreenCaptureUsageDescription = "Capture the app audio stream for controlled playback-path measurements.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;

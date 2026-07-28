@@ -30,8 +30,23 @@ struct AudioItem: Identifiable, Equatable {
 }
 
 struct QueueItem {
+    let itemKey: String
     let sourceURL: URL
     let localURL: URL
     let displayName: String
     let repeatCount: Int
+
+    init(
+        itemKey: String? = nil,
+        sourceURL: URL,
+        localURL: URL,
+        displayName: String,
+        repeatCount: Int
+    ) {
+        self.itemKey = itemKey ?? localURL.lastPathComponent
+        self.sourceURL = sourceURL
+        self.localURL = localURL
+        self.displayName = displayName
+        self.repeatCount = repeatCount
+    }
 }

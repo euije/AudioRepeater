@@ -4,6 +4,9 @@ struct ResolvedRemotePlaybackRequest {
     let queueItems: [QueueItem]
     let sameFileDelaySeconds: Double
     let differentFileDelaySeconds: Double
+    let playbackPath: PlaybackPath
+    let captureSystemAudio: Bool
+    let systemAudioCaptureURL: URL?
     let eventLogURL: URL
 }
 
@@ -18,6 +21,9 @@ enum RemotePlaybackRequestLoader {
         let files: [File]
         let sameFileDelaySeconds: Double
         let differentFileDelaySeconds: Double
+        let playbackPath: PlaybackPath?
+        let captureSystemAudio: Bool?
+        let systemAudioCaptureFileName: String?
     }
 
     private static let manifestName = "remote-playback.json"
@@ -74,10 +80,23 @@ enum RemotePlaybackRequestLoader {
             try fileManager.removeItem(at: eventLogURL)
         }
         try fileManager.removeItem(at: manifestURL)
+
+        let captureSystemAudio = request.captureSystemAudio ?? false
+        let captureFileName = request.systemAudioCaptureFileName ?? "screen-capture.caf"
+        guard !captureSystemAudio || isSafeFileName(captureFileName) else {
+            throw RemotePlaybackRequestError.invalidFileName(captureFileName)
+        }
+        let systemAudioCaptureURL = captureSystemAudio
+            ? documentsURL.appendingPathComponent(captureFileName, isDirectory: false)
+            : nil
+
         return ResolvedRemotePlaybackRequest(
             queueItems: queueItems,
             sameFileDelaySeconds: request.sameFileDelaySeconds,
             differentFileDelaySeconds: request.differentFileDelaySeconds,
+            playbackPath: request.playbackPath ?? .avAudioEngine,
+            captureSystemAudio: captureSystemAudio,
+            systemAudioCaptureURL: systemAudioCaptureURL,
             eventLogURL: eventLogURL
         )
     }
