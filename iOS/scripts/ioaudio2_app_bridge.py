@@ -34,6 +34,9 @@ PYTHON = pathlib.Path("~/.venvs/a2m-frida/bin/python").expanduser()
 INJECTOR = BRIDGE_ROOT / "inject_wav_ioaudio2.py"
 INJECTOR_SCRIPT = BRIDGE_ROOT / "inject_wav_ioaudio2.js"
 VOLUME_SCRIPT = BRIDGE_ROOT / "set_media_volume.js"
+KEEPALIVE_SOURCE = (
+    BRIDGE_ROOT / "audiorepeater_ioaudio2_keepalive.sh"
+)
 RUNS = BRIDGE_ROOT / "runs"
 SSH_CONTROL_PATH = BRIDGE_ROOT / "ssh-control-%r@%h:%p"
 
@@ -115,6 +118,18 @@ def ensure_frida_tunnel() -> None:
         except OSError:
             time.sleep(0.1)
     raise RuntimeError("Frida tunnel did not become ready")
+
+
+def install_keepalive() -> None:
+    source = KEEPALIVE_SOURCE.read_text(encoding="utf-8")
+    temporary = "/tmp/a2m_c0004_audiorepeater_keepalive.new"
+    command = (
+        f"cat > '{temporary}'; "
+        f"chown root:wheel '{temporary}'; "
+        f"chmod 755 '{temporary}'; "
+        f"mv '{temporary}' '{KEEPALIVE}'"
+    )
+    run_ssh(command, input_text=source)
 
 
 def claim_request() -> dict[str, Any] | None:
@@ -664,6 +679,7 @@ def process_request(request: dict[str, Any]) -> None:
         "accepted",
         message="c0004 IOAudio2 ring 준비 중",
     )
+    install_keepalive()
     ensure_frida_tunnel()
     same_file_delay_seconds = float(
         request.get("sameFileDelaySeconds", 0)
@@ -738,6 +754,7 @@ def preflight() -> None:
         INJECTOR,
         INJECTOR_SCRIPT,
         VOLUME_SCRIPT,
+        KEEPALIVE_SOURCE,
     )
     missing = [str(path) for path in required if not path.is_file()]
     if missing:
