@@ -4,8 +4,8 @@ import SwiftUI
 struct ContentView: View {
     @StateObject private var player = AudioQueuePlayer()
     @StateObject private var ioAudio2Bridge = IOAudio2BridgeController()
-    @AppStorage("ioAudio2RingOverwriteEnabled")
-    private var ioAudio2RingOverwriteEnabled = true
+    @AppStorage(AudioRepeaterPreferences.ioAudio2RingOverwriteEnabled)
+    private var ioAudio2RingOverwriteEnabled = false
     @State private var items: [AudioItem] = []
     @State private var defaultRepeatText = "1"
     @State private var sameFileDelayText = "0"
@@ -580,7 +580,10 @@ private struct AudioItemRow: View {
 
             Button(role: .destructive, action: onDelete) {
                 Image(systemName: "trash")
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
             }
+            .buttonStyle(.borderless)
             .disabled(isPlaying)
         }
         .padding(.horizontal, 10)
