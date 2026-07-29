@@ -99,7 +99,8 @@ import kotlinx.coroutines.withContext
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val debugAudioConfig = DebugAudioConfig.from(intent)
+        val debugAudioConfig =
+            DebugAudioConfig.from(intent) ?: applicationContext.loadPersistedDebugAudioConfig()
         enableEdgeToEdge()
         setContent {
             AudioRepeaterTheme {
@@ -151,10 +152,11 @@ private fun AudioRepeaterApp(debugAudioConfig: DebugAudioConfig? = null) {
     val differentFileDelayMillis = differentFileDelayText.toDelayMillisOrNull()
     val canPlay = !isPlaying &&
         !isImporting &&
-        items.isNotEmpty() &&
+        items.any { it.isPlaybackEnabled } &&
         sameFileDelayMillis != null &&
         differentFileDelayMillis != null &&
-        items.all { it.repeatText.toPositiveRepeatCountOrNull() != null }
+        items.filter { it.isPlaybackEnabled }
+            .all { it.repeatText.toPositiveRepeatCountOrNull() != null }
 
     val documentLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
@@ -214,7 +216,8 @@ private fun AudioRepeaterApp(debugAudioConfig: DebugAudioConfig? = null) {
                 useDirectAlsa = false,
                 useLowLatencyAudioTrack = false,
                 forceStereoRouteAssist = false,
-                directAlsaPcmDevice = null
+                directAlsaPcmDevice = null,
+                autoPlayOnLoad = true
             )
             Log.i(LOG_TAG, "debug fallback files=${debugFiles.size}")
         }
@@ -232,7 +235,8 @@ private fun AudioRepeaterApp(debugAudioConfig: DebugAudioConfig? = null) {
                     useDirectAlsa = currentConfig?.useDirectAlsa ?: false,
                     useLowLatencyAudioTrack = currentConfig?.useLowLatencyAudioTrack ?: false,
                     forceStereoRouteAssist = currentConfig?.forceStereoRouteAssist ?: false,
-                    directAlsaPcmDevice = currentConfig?.directAlsaPcmDevice
+                    directAlsaPcmDevice = currentConfig?.directAlsaPcmDevice,
+                    autoPlayOnLoad = currentConfig?.autoPlayOnLoad ?: true
                 )
                 Log.i(LOG_TAG, "debug path fallback files=${debugFiles.size}")
             }
@@ -252,6 +256,7 @@ private fun AudioRepeaterApp(debugAudioConfig: DebugAudioConfig? = null) {
                 localPath = file.absolutePath,
                 displayName = file.name,
                 repeatText = activeConfig.repeatCount.toString(),
+                isPlaybackEnabled = context.isPersistedPlaybackEnabled(file.absolutePath),
                 deleteLocalFileOnRemove = false
             )
         }
@@ -266,23 +271,28 @@ private fun AudioRepeaterApp(debugAudioConfig: DebugAudioConfig? = null) {
             activeConfig.useDirectAlsa,
             activeConfig.useAaudioExclusive
         )
-        player.play(
-            items = debugItems.map { item ->
-                QueueItem(
-                    sourceUri = item.uri,
-                    localPath = item.localPath,
-                    displayName = item.displayName,
-                    repeatCount = activeConfig.repeatCount
-                )
-            },
-            sameFileDelayMillis = activeConfig.sameFileDelaySeconds.toDelayMillisOrNull() ?: 0L,
-            differentFileDelayMillis = activeConfig.differentFileDelaySeconds.toDelayMillisOrNull() ?: 0L,
-            useAaudioExclusive = activeConfig.useAaudioExclusive,
-            useDirectAlsa = activeConfig.useDirectAlsa,
-            useLowLatencyAudioTrack = activeConfig.useLowLatencyAudioTrack,
-            forceStereoRouteAssist = activeConfig.forceStereoRouteAssist,
-            directAlsaPcmDevice = activeConfig.directAlsaPcmDevice
-        )
+        if (activeConfig.autoPlayOnLoad) {
+            context.savePersistedDebugAudioConfig(activeConfig)
+            player.play(
+                items = debugItems.filter { item -> item.isPlaybackEnabled }.map { item ->
+                    QueueItem(
+                        sourceUri = item.uri,
+                        localPath = item.localPath,
+                        displayName = item.displayName,
+                        repeatCount = activeConfig.repeatCount
+                    )
+                },
+                sameFileDelayMillis = activeConfig.sameFileDelaySeconds.toDelayMillisOrNull() ?: 0L,
+                differentFileDelayMillis = activeConfig.differentFileDelaySeconds.toDelayMillisOrNull() ?: 0L,
+                useAaudioExclusive = activeConfig.useAaudioExclusive,
+                useDirectAlsa = activeConfig.useDirectAlsa,
+                useLowLatencyAudioTrack = activeConfig.useLowLatencyAudioTrack,
+                forceStereoRouteAssist = activeConfig.forceStereoRouteAssist,
+                directAlsaPcmDevice = activeConfig.directAlsaPcmDevice
+            )
+        } else {
+            Log.i(LOG_TAG, "restored persisted debug list files=${debugItems.size} without autoplay")
+        }
     }
 
     Scaffold(
@@ -439,7 +449,7 @@ private fun AudioRepeaterApp(debugAudioConfig: DebugAudioConfig? = null) {
             ) {
                 Button(
                     onClick = {
-                        val queue = items.mapNotNull { item ->
+                        val queue = items.filter { item -> item.isPlaybackEnabled }.mapNotNull { item ->
                             item.repeatText.toPositiveRepeatCountOrNull()?.let { repeatCount ->
                                 QueueItem(
                                     sourceUri = item.uri,
@@ -519,6 +529,13 @@ private fun AudioRepeaterApp(debugAudioConfig: DebugAudioConfig? = null) {
                             enabled = !isPlaying,
                             onRepeatChange = { newValue ->
                                 items[index] = item.copy(repeatText = sanitizeRepeatInput(newValue))
+                            },
+                            onPlaybackEnabledChange = { isPlaybackEnabled ->
+                                items[index] = item.copy(isPlaybackEnabled = isPlaybackEnabled)
+                                context.setPersistedPlaybackEnabled(
+                                    item.localPath,
+                                    isPlaybackEnabled
+                                )
                             },
                             onDelete = {
                                 val removedItem = items.removeAt(index)
@@ -625,6 +642,7 @@ private fun WavItemRow(
     isCurrent: Boolean,
     enabled: Boolean,
     onRepeatChange: (String) -> Unit,
+    onPlaybackEnabledChange: (Boolean) -> Unit,
     onDelete: () -> Unit
 ) {
     val colors = if (isCurrent) {
@@ -651,6 +669,12 @@ private fun WavItemRow(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            Checkbox(
+                checked = item.isPlaybackEnabled,
+                onCheckedChange = onPlaybackEnabledChange,
+                enabled = enabled
+            )
+
             Icon(
                 imageVector = Icons.Default.MusicNote,
                 contentDescription = null,
@@ -671,7 +695,7 @@ private fun WavItemRow(
                 onValueChange = onRepeatChange,
                 label = "횟수",
                 modifier = Modifier.width(88.dp),
-                enabled = enabled
+                enabled = enabled && item.isPlaybackEnabled
             )
 
             IconButton(
@@ -692,6 +716,7 @@ private data class WavAudioItem(
     val localPath: String,
     val displayName: String,
     val repeatText: String,
+    val isPlaybackEnabled: Boolean = true,
     val deleteLocalFileOnRemove: Boolean = true,
     val id: String = UUID.randomUUID().toString()
 )
@@ -717,7 +742,8 @@ private data class DebugAudioConfig(
     val useDirectAlsa: Boolean,
     val useLowLatencyAudioTrack: Boolean,
     val forceStereoRouteAssist: Boolean,
-    val directAlsaPcmDevice: Int?
+    val directAlsaPcmDevice: Int?,
+    val autoPlayOnLoad: Boolean
 ) {
     companion object {
         fun from(intent: Intent): DebugAudioConfig? {
@@ -740,10 +766,80 @@ private data class DebugAudioConfig(
                         .takeIf { device -> device >= 0 }
                 } else {
                     null
-                }
+                },
+                autoPlayOnLoad = true
             )
         }
     }
+}
+
+private fun Context.savePersistedDebugAudioConfig(config: DebugAudioConfig) {
+    getSharedPreferences(PERSISTED_PLAYLIST_PREFERENCES, Context.MODE_PRIVATE)
+        .edit()
+        .putString(PERSISTED_PLAYLIST_PATHS, config.localPaths.joinToString("\n"))
+        .putInt(PERSISTED_PLAYLIST_REPEAT_COUNT, config.repeatCount)
+        .putString(PERSISTED_PLAYLIST_SAME_DELAY, config.sameFileDelaySeconds)
+        .putString(PERSISTED_PLAYLIST_DIFFERENT_DELAY, config.differentFileDelaySeconds)
+        .putBoolean(PERSISTED_PLAYLIST_AAUDIO, config.useAaudioExclusive)
+        .putBoolean(PERSISTED_PLAYLIST_DIRECT_ALSA, config.useDirectAlsa)
+        .putBoolean(PERSISTED_PLAYLIST_LOW_LATENCY, config.useLowLatencyAudioTrack)
+        .putBoolean(PERSISTED_PLAYLIST_ROUTE_ASSIST, config.forceStereoRouteAssist)
+        .putInt(PERSISTED_PLAYLIST_PCM_DEVICE, config.directAlsaPcmDevice ?: -1)
+        .apply()
+}
+
+private fun Context.loadPersistedDebugAudioConfig(): DebugAudioConfig? {
+    val preferences =
+        getSharedPreferences(PERSISTED_PLAYLIST_PREFERENCES, Context.MODE_PRIVATE)
+    val paths = preferences.getString(PERSISTED_PLAYLIST_PATHS, null)
+        ?.lineSequence()
+        ?.filter { path -> path.isNotBlank() }
+        ?.toList()
+        .orEmpty()
+    if (paths.isEmpty()) return null
+
+    return DebugAudioConfig(
+        localPaths = paths,
+        repeatCount = preferences.getInt(PERSISTED_PLAYLIST_REPEAT_COUNT, 1).coerceAtLeast(1),
+        sameFileDelaySeconds = preferences.getString(PERSISTED_PLAYLIST_SAME_DELAY, "0.8")
+            ?: "0.8",
+        differentFileDelaySeconds =
+            preferences.getString(PERSISTED_PLAYLIST_DIFFERENT_DELAY, "0") ?: "0",
+        useAaudioExclusive = preferences.getBoolean(PERSISTED_PLAYLIST_AAUDIO, false),
+        useDirectAlsa = preferences.getBoolean(PERSISTED_PLAYLIST_DIRECT_ALSA, false),
+        useLowLatencyAudioTrack =
+            preferences.getBoolean(PERSISTED_PLAYLIST_LOW_LATENCY, false),
+        forceStereoRouteAssist =
+            preferences.getBoolean(PERSISTED_PLAYLIST_ROUTE_ASSIST, false),
+        directAlsaPcmDevice = preferences.getInt(PERSISTED_PLAYLIST_PCM_DEVICE, -1)
+            .takeIf { device -> device >= 0 },
+        autoPlayOnLoad = false
+    )
+}
+
+private fun Context.isPersistedPlaybackEnabled(localPath: String): Boolean {
+    val disabledPaths =
+        getSharedPreferences(PERSISTED_PLAYLIST_PREFERENCES, Context.MODE_PRIVATE)
+            .getStringSet(PERSISTED_PLAYLIST_DISABLED_PATHS, emptySet())
+            .orEmpty()
+    return localPath !in disabledPaths
+}
+
+private fun Context.setPersistedPlaybackEnabled(localPath: String, enabled: Boolean) {
+    val preferences =
+        getSharedPreferences(PERSISTED_PLAYLIST_PREFERENCES, Context.MODE_PRIVATE)
+    val disabledPaths =
+        preferences.getStringSet(PERSISTED_PLAYLIST_DISABLED_PATHS, emptySet())
+            .orEmpty()
+            .toMutableSet()
+    if (enabled) {
+        disabledPaths.remove(localPath)
+    } else {
+        disabledPaths.add(localPath)
+    }
+    preferences.edit()
+        .putStringSet(PERSISTED_PLAYLIST_DISABLED_PATHS, disabledPaths)
+        .apply()
 }
 
 private fun selectedPlaybackPathStatus(
@@ -1003,16 +1099,36 @@ private data class RootAlsaProfile(
             "${'$'}helper" "${'$'}input" -D $card -d $pcmDevice -p $periodSize -n $periodCount &
             pcm_pid=${'$'}!
             echo "A2M_ALSA_PCM_PID ${'$'}pcm_pid"
-            sleep 0.10
-            fd_targets=${'$'}(
-              for fd in /proc/"${'$'}pcm_pid"/fd/*; do
-                readlink "${'$'}fd" 2>/dev/null || true
-              done
-            )
+            fd_targets=
+            fd_probe=0
+            while [ "${'$'}fd_probe" -lt 20 ]; do
+              fd_targets=${'$'}(
+                for fd in /proc/"${'$'}pcm_pid"/fd/*; do
+                  readlink "${'$'}fd" 2>/dev/null || true
+                done
+              )
+              case "${'$'}fd_targets" in
+                *"${'$'}expected_node"*) break ;;
+              esac
+              kill -0 "${'$'}pcm_pid" 2>/dev/null || break
+              fd_probe=${'$'}((fd_probe + 1))
+              sleep 0.005
+            done
             echo "A2M_ALSA_PCM_FDS ${'$'}fd_targets"
             case "${'$'}fd_targets" in
               *"${'$'}expected_node"*) ;;
               *)
+                if ! kill -0 "${'$'}pcm_pid" 2>/dev/null; then
+                  wait "${'$'}pcm_pid"
+                  pcm_rc=${'$'}?
+                  [ "${'$'}pcm_rc" -eq 0 ] || {
+                    echo "A2M_ALSA_PCM_FAILED exit=${'$'}pcm_rc"
+                    exit "${'$'}pcm_rc"
+                  }
+                  echo "A2M_ALSA_PCM_SHORT_COMPLETE requested_node=${'$'}expected_node"
+                  echo "A2M_ALSA_PCM_COMPLETE node=${'$'}expected_node"
+                  exit 0
+                fi
                 echo "A2M_ALSA_PCM_NODE_MISMATCH expected=${'$'}expected_node"
                 kill "${'$'}pcm_pid" 2>/dev/null || true
                 wait "${'$'}pcm_pid" 2>/dev/null || true
@@ -1704,8 +1820,12 @@ private class AudioQueuePlayer(
         }
         val signalFrames = wavSpec.dataSize / wavSpec.frameSize
         val delayFrames = delayMillisToFrameCount(sameFileDelayMillis, wavSpec.sampleRate)
+        val proofTailFrames =
+            delayMillisToFrameCount(ROOT_ALSA_PROOF_TAIL_MILLIS, wavSpec.sampleRate)
         val totalFrames =
-            signalFrames * item.repeatCount + delayFrames * (item.repeatCount - 1).coerceAtLeast(0)
+            signalFrames * item.repeatCount +
+                delayFrames * (item.repeatCount - 1).coerceAtLeast(0) +
+                proofTailFrames
         val dataBytes = totalFrames * wavSpec.frameSize
         require(dataBytes in 1..WAV_UINT32_MAX) {
             "Direct ALSA aggregate WAV is too large: $dataBytes bytes"
@@ -1763,6 +1883,12 @@ private class AudioQueuePlayer(
                             output.write(buffer, 0, byteCount)
                         }
                     }
+                }
+                framesWritten += writeExactPcmSilence(
+                    wavSpec,
+                    ROOT_ALSA_PROOF_TAIL_MILLIS
+                ) { buffer, byteCount ->
+                    output.write(buffer, 0, byteCount)
                 }
                 check(framesWritten == totalFrames) {
                     "Direct ALSA aggregate frame mismatch: $framesWritten != $totalFrames"
@@ -2828,12 +2954,24 @@ private const val DEBUG_DIRECT_ALSA_EXTRA = "debugUseDirectAlsa"
 private const val DEBUG_LOW_LATENCY_AUDIOTRACK_EXTRA = "debugUseLowLatencyAudioTrack"
 private const val DEBUG_FORCE_STEREO_ROUTE_ASSIST_EXTRA = "debugForceStereoRouteAssist"
 private const val DEBUG_DIRECT_ALSA_PCM_DEVICE_EXTRA = "debugDirectAlsaPcmDevice"
+private const val PERSISTED_PLAYLIST_PREFERENCES = "persisted-playlist"
+private const val PERSISTED_PLAYLIST_PATHS = "paths"
+private const val PERSISTED_PLAYLIST_REPEAT_COUNT = "repeat-count"
+private const val PERSISTED_PLAYLIST_SAME_DELAY = "same-delay"
+private const val PERSISTED_PLAYLIST_DIFFERENT_DELAY = "different-delay"
+private const val PERSISTED_PLAYLIST_AAUDIO = "aaudio"
+private const val PERSISTED_PLAYLIST_DIRECT_ALSA = "direct-alsa"
+private const val PERSISTED_PLAYLIST_LOW_LATENCY = "low-latency"
+private const val PERSISTED_PLAYLIST_ROUTE_ASSIST = "route-assist"
+private const val PERSISTED_PLAYLIST_PCM_DEVICE = "pcm-device"
+private const val PERSISTED_PLAYLIST_DISABLED_PATHS = "disabled-paths"
 private const val ROOT_ALSA_CACHE_DIRECTORY_NAME = "root-alsa"
 private const val ROOT_ALSA_TINYPLAY_PATH =
     "/data/local/tmp/audiorepeater_alsa/tinyplay_pcm_write"
 private const val ROOT_ALSA_TINYPLAY_SHA256 =
     "a4c29d738c76e73c32b4ac7940de5a72974128c14f6a44aacdf9e82e2b8cf785"
 private const val ROOT_ALSA_ROUTE_STARTUP_MILLIS = 750L
+private const val ROOT_ALSA_PROOF_TAIL_MILLIS = 150L
 private const val ROOT_ALSA_ROUTE_THREAD_JOIN_MILLIS = 1_000L
 private const val ROOT_ALSA_PROCESS_TIMEOUT_SECONDS = 300L
 private const val ROOT_ALSA_CLEANUP_TIMEOUT_SECONDS = 5L

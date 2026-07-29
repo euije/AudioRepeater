@@ -45,6 +45,11 @@ STATIC_SOURCE_OFFSET_FRAMES = 4_096
 SAMPLE_RATE = 48_000
 RING_SECONDS = STATIC_RING_FRAMES / SAMPLE_RATE
 SOURCE_OFFSET_SECONDS = STATIC_SOURCE_OFFSET_FRAMES / SAMPLE_RATE
+INJECTOR_START_TIMEOUT_SECONDS = 20.0
+INJECTOR_MAX_ATTEMPTS = 5
+INJECTOR_RETRY_DELAY_SECONDS = 5.0
+INJECTOR_SETTLE_SECONDS = 8.0
+last_timeline_completion = 0.0
 
 
 def ssh_args(remote_command: str) -> list[str]:
@@ -360,6 +365,25 @@ def stream_output(
             output_queue.put(line)
 
 
+def recover_stalled_injector(gated_pid: int | None) -> None:
+    commands: list[str] = []
+    if gated_pid is not None:
+        commands.append(f"kill -9 {gated_pid} 2>/dev/null || true")
+    commands.extend(
+        [
+            "killall frida-server 2>/dev/null || true",
+            "sleep 1",
+            "/var/jb/usr/sbin/frida-server -D >/dev/null 2>&1 || true",
+        ]
+    )
+    result = run_ssh("; ".join(commands), check=False, timeout=10)
+    if result.returncode != 0:
+        raise RuntimeError(
+            result.stderr.strip() or "failed to recover stalled injector"
+        )
+    time.sleep(1)
+
+
 def injector_command(
     wav: pathlib.Path,
     repeat_count: int,
@@ -521,14 +545,20 @@ def play_item(
     return True
 
 
-def play_timeline(
+class InjectorStartupTimeout(RuntimeError):
+    pass
+
+
+def play_timeline_once(
     request_id: str,
     timeline_wav: pathlib.Path,
     events: list[dict[str, Any]],
     run_directory: pathlib.Path,
+    attempt: int,
 ) -> bool:
-    injector_log = run_directory / "timeline.injector.jsonl"
-    stdout_log = run_directory / "timeline.stdout.log"
+    suffix = "" if attempt == 1 else f".attempt{attempt}"
+    injector_log = run_directory / f"timeline{suffix}.injector.jsonl"
+    stdout_log = run_directory / f"timeline{suffix}.stdout.log"
     process = subprocess.Popen(
         injector_command(
             timeline_wav,
@@ -553,12 +583,19 @@ def play_timeline(
     started_epoch: float | None = None
     last_event_index = -1
     last_cancel_poll = 0.0
+    launched_at = time.monotonic()
+    startup_timed_out = False
+    gated_pid: int | None = None
     try:
         while process.poll() is None:
             now = time.monotonic()
             try:
                 while True:
                     line = output_queue.get_nowait()
+                    if "gated-pid=" in line:
+                        pid_text = line.rsplit("gated-pid=", 1)[-1].strip()
+                        if pid_text.isdigit():
+                            gated_pid = int(pid_text)
                     if (
                         '"event":"started"' in line
                         and started_at is None
@@ -567,6 +604,18 @@ def play_timeline(
                         started_epoch = time.time()
             except queue.Empty:
                 pass
+
+            if (
+                started_at is None
+                and now - launched_at >= INJECTOR_START_TIMEOUT_SECONDS
+            ):
+                startup_timed_out = True
+                process.terminate()
+                try:
+                    process.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                break
 
             if now - last_cancel_poll >= 0.5:
                 last_cancel_poll = now
@@ -625,8 +674,19 @@ def play_timeline(
     finally:
         if process.poll() is None:
             process.kill()
+            process.wait(timeout=3)
         output_thread.join(timeout=2)
 
+    if startup_timed_out:
+        recover_stalled_injector(gated_pid)
+        detail = stdout_log.read_text(
+            encoding="utf-8",
+            errors="replace",
+        )[-2_000:]
+        raise InjectorStartupTimeout(
+            "IOAudio2 timeline injector did not start within "
+            f"{INJECTOR_START_TIMEOUT_SECONDS:.0f}s: {detail}"
+        )
     if process.returncode != 0:
         detail = stdout_log.read_text(
             encoding="utf-8",
@@ -637,6 +697,62 @@ def play_timeline(
             f"({process.returncode}): {detail}"
         )
     return True
+
+
+def play_timeline(
+    request_id: str,
+    timeline_wav: pathlib.Path,
+    events: list[dict[str, Any]],
+    run_directory: pathlib.Path,
+) -> bool:
+    global last_timeline_completion
+    settle_deadline = (
+        last_timeline_completion + INJECTOR_SETTLE_SECONDS
+    )
+    while time.monotonic() < settle_deadline:
+        if read_cancel_request(request_id):
+            return False
+        time.sleep(
+            min(0.5, max(0.0, settle_deadline - time.monotonic()))
+        )
+
+    last_error: RuntimeError | None = None
+    for attempt in range(1, INJECTOR_MAX_ATTEMPTS + 1):
+        try:
+            completed = play_timeline_once(
+                request_id,
+                timeline_wav,
+                events,
+                run_directory,
+                attempt,
+            )
+            if completed:
+                last_timeline_completion = time.monotonic()
+            return completed
+        except RuntimeError as error:
+            last_error = error
+            if attempt >= INJECTOR_MAX_ATTEMPTS:
+                break
+            logging.warning(
+                "timeline injector retry request=%s attempt=%s/%s error=%s",
+                request_id,
+                attempt,
+                INJECTOR_MAX_ATTEMPTS,
+                error,
+            )
+            write_status(
+                request_id,
+                "accepted",
+                message=(
+                    "c0004 IOAudio2 ring 재연결 중 "
+                    f"({attempt + 1}/{INJECTOR_MAX_ATTEMPTS})"
+                ),
+            )
+            time.sleep(INJECTOR_RETRY_DELAY_SECONDS)
+            ensure_frida_tunnel()
+
+    assert last_error is not None
+    raise last_error
 
 
 def validate_request(request: dict[str, Any]) -> None:

@@ -34,13 +34,17 @@ struct ContentView: View {
         ioAudio2Bridge.state.isRunning ? ioAudio2Bridge.state : player.state
     }
 
+    private var enabledItems: [AudioItem] {
+        items.filter(\.isEnabled)
+    }
+
     private var canPlay: Bool {
         !isPlaybackRunning &&
             !isImporting &&
-            !items.isEmpty &&
+            !enabledItems.isEmpty &&
             sameFileDelay != nil &&
             differentFileDelay != nil &&
-            items.allSatisfy { $0.repeatCount != nil }
+            enabledItems.allSatisfy { $0.repeatCount != nil }
     }
 
     var body: some View {
@@ -186,6 +190,7 @@ struct ContentView: View {
             if !isRingKeepalive {
                 items = request.queueItems.map { item in
                     AudioItem(
+                        playbackKey: item.itemKey,
                         sourceURL: item.sourceURL,
                         localURL: item.localURL,
                         displayName: item.displayName,
@@ -207,6 +212,21 @@ struct ContentView: View {
                     "sameDelay=\(request.sameFileDelaySeconds) " +
                     "diffDelay=\(request.differentFileDelaySeconds) " +
                     "path=\(request.playbackPath.rawValue) " +
+                    "pan=\(request.avAudioEnginePan) " +
+                    "gain=\(request.avAudioEngineGain) " +
+                    "directPCM=\(request.avAudioEngineDirectPCM) " +
+                    "isolateSignals=\(request.avAudioEngineIsolateSignals) " +
+                    "eqFrequency=\(request.avAudioEngineEQFrequency) " +
+                    "eqGain=\(request.avAudioEngineEQGain) " +
+                    "eqBandwidth=\(request.avAudioEngineEQBandwidth) " +
+                    "automaticFormat=\(request.avAudioEngineAutomaticFormat) " +
+                    "completionCallback=\(request.avAudioEngineCompletionCallback) " +
+                    "stopEachSignal=\(request.avAudioEngineStopPlayerEachSignal) " +
+                    "completionDelayFrames=\(request.avAudioEngineCompletionDelayFrames) " +
+                    "stereoMode=\(request.avAudioEngineStereoMode) " +
+                    "ioBuffer=\(request.preferredIOBufferDuration) " +
+                    "forceMaxVolume=\(request.forceMaximumOutputVolume) " +
+                    "mode=\(request.avAudioSessionMode) " +
                     "captureSystemAudio=\(request.captureSystemAudio)"
             )
             player.play(
@@ -214,6 +234,31 @@ struct ContentView: View {
                 sameFileDelaySeconds: request.sameFileDelaySeconds,
                 differentFileDelaySeconds: request.differentFileDelaySeconds,
                 playbackPath: request.playbackPath,
+                avAudioEnginePan: request.avAudioEnginePan,
+                avAudioEngineGain: request.avAudioEngineGain,
+                avAudioEngineDirectPCM: request.avAudioEngineDirectPCM,
+                avAudioEngineIsolateSignals:
+                    request.avAudioEngineIsolateSignals,
+                avAudioEngineEQFrequency:
+                    request.avAudioEngineEQFrequency,
+                avAudioEngineEQGain: request.avAudioEngineEQGain,
+                avAudioEngineEQBandwidth:
+                    request.avAudioEngineEQBandwidth,
+                avAudioEngineAutomaticFormat:
+                    request.avAudioEngineAutomaticFormat,
+                avAudioEngineCompletionCallback:
+                    request.avAudioEngineCompletionCallback,
+                avAudioEngineStopPlayerEachSignal:
+                    request.avAudioEngineStopPlayerEachSignal,
+                avAudioEngineCompletionDelayFrames:
+                    request.avAudioEngineCompletionDelayFrames,
+                avAudioEngineStereoMode:
+                    request.avAudioEngineStereoMode,
+                preferredIOBufferDuration:
+                    request.preferredIOBufferDuration,
+                forceMaximumOutputVolume:
+                    request.forceMaximumOutputVolume,
+                avAudioSessionMode: request.avAudioSessionMode,
                 systemAudioCaptureURL: request.systemAudioCaptureURL,
                 eventLogURL: request.eventLogURL
             )
@@ -305,11 +350,12 @@ struct ContentView: View {
             HStack(spacing: 12) {
                 Button {
                     let queueItems = items.compactMap { item -> QueueItem? in
-                        guard let repeatCount = item.repeatCount else {
+                        guard item.isEnabled,
+                              let repeatCount = item.repeatCount else {
                             return nil
                         }
                         return QueueItem(
-                            itemKey: item.localURL.lastPathComponent,
+                            itemKey: item.playbackKey,
                             sourceURL: item.sourceURL,
                             localURL: item.localURL,
                             displayName: item.displayName,
@@ -366,7 +412,7 @@ struct ContentView: View {
 
     private var listContent: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("목록 (\(items.count))")
+            Text("목록 (\(enabledItems.count)/\(items.count) 활성)")
                 .font(.headline)
 
             if items.isEmpty {
@@ -504,7 +550,7 @@ struct ContentView: View {
             currentRepeat,
             totalRepeats
         ) = activePlaybackState,
-           itemKey == item.localURL.lastPathComponent {
+           itemKey == item.playbackKey {
             return (currentRepeat, totalRepeats)
         }
         return nil
@@ -530,6 +576,28 @@ private struct AudioItemRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
+            Button {
+                item.isEnabled.toggle()
+            } label: {
+                Image(
+                    systemName:
+                        item.isEnabled
+                            ? "checkmark.square.fill"
+                            : "square"
+                )
+                .font(.title3)
+                .foregroundStyle(
+                    item.isEnabled ? Color.accentColor : Color.secondary
+                )
+                .frame(width: 32, height: 44)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.borderless)
+            .disabled(isPlaying)
+            .accessibilityLabel(
+                item.isEnabled ? "아이템 비활성화" : "아이템 활성화"
+            )
+
             Image(systemName: isCurrent ? "waveform" : "music.note")
                 .font(isCurrent ? .title3 : .body)
                 .foregroundStyle(isCurrent ? .orange : .secondary)
@@ -570,7 +638,7 @@ private struct AudioItemRow: View {
                 .keyboardType(.numberPad)
                 .textFieldStyle(.roundedBorder)
                 .frame(width: 76)
-                .disabled(isPlaying)
+                .disabled(isPlaying || !item.isEnabled)
                 .onChange(of: item.repeatText) { newValue in
                     let sanitized = sanitizeRepeatInput(newValue)
                     if sanitized != newValue {
@@ -588,6 +656,7 @@ private struct AudioItemRow: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 10)
+        .opacity(item.isEnabled ? 1 : 0.5)
         .background(
             RoundedRectangle(cornerRadius: 12)
                 .fill(isCurrent ? Color.orange.opacity(0.18) : Color.clear)
