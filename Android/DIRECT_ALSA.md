@@ -43,6 +43,8 @@ Supported device profiles:
 | Device | PCM | FE-to-BE route |
 | --- | --- | --- |
 | Pixel 4 (`flame`) | `/dev/snd/pcmC0D13p` | `TERT_TDM_RX_0 Audio Mixer MultiMedia5` |
+| Pixel 7 (`panther`) | `/dev/snd/pcmC0D1p` | `TDM_0_RX Mixer EP2` |
+| Redmi Note 7 (`lavender`) | `/dev/snd/pcmC0D13p` | `PRI_MI2S_RX Audio Mixer MultiMedia5` |
 | ZFlip3 (`b2q`) | `/dev/snd/pcmC0D9p` | `PRI_TDM_RX_0 Audio Mixer MultiMedia5` |
 | ZFlip3 ablation (`debugDirectAlsaPcmDevice=0`) | `/dev/snd/pcmC0D0p` | `PRI_TDM_RX_0 Audio Mixer MultiMedia1` |
 

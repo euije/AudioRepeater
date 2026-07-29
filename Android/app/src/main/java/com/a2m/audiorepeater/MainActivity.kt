@@ -338,7 +338,7 @@ private fun AudioRepeaterApp(debugAudioConfig: DebugAudioConfig? = null) {
                         style = MaterialTheme.typography.bodyLarge
                     )
                     Text(
-                        text = "Pixel 4 및 ZFlip3용 · root와 사전 배포된 ALSA 도구 필요",
+                        text = "지원 기기용 · root와 사전 배포된 ALSA 도구 필요",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -1063,6 +1063,7 @@ private data class RootAlsaProfile(
             expected_hash=$expectedHash
             expected_device=$expectedDeviceValue
             expected_node=$expectedNodeValue
+            expected_status=/proc/asound/card${card}/pcm${pcmDevice}p/sub0/status
             cleanup() {
               $routeDisableCommand >/dev/null 2>&1 || true
               final_route=$($routeQueryCommand 2>&1 || true)
@@ -1100,6 +1101,8 @@ private data class RootAlsaProfile(
             pcm_pid=${'$'}!
             echo "A2M_ALSA_PCM_PID ${'$'}pcm_pid"
             fd_targets=
+            pcm_status=
+            pcm_live=0
             fd_probe=0
             while [ "${'$'}fd_probe" -lt 20 ]; do
               fd_targets=${'$'}(
@@ -1107,18 +1110,28 @@ private data class RootAlsaProfile(
                   readlink "${'$'}fd" 2>/dev/null || true
                 done
               )
+              pcm_status=${'$'}(cat "${'$'}expected_status" 2>/dev/null || true)
               case "${'$'}fd_targets" in
                 *"${'$'}expected_node"*) break ;;
+              esac
+              case "${'$'}pcm_status" in
+                *RUNNING*"${'$'}pcm_pid"*) pcm_live=1; break ;;
               esac
               kill -0 "${'$'}pcm_pid" 2>/dev/null || break
               fd_probe=${'$'}((fd_probe + 1))
               sleep 0.005
             done
             echo "A2M_ALSA_PCM_FDS ${'$'}fd_targets"
+            echo "A2M_ALSA_PCM_STATUS ${'$'}(echo "${'$'}pcm_status" | tr '\n' ' ')"
+            if [ "${'$'}pcm_live" -eq 1 ]; then
+              echo "A2M_ALSA_PCM_LIVE node=${'$'}expected_node pid=${'$'}pcm_pid"
+            fi
             case "${'$'}fd_targets" in
               *"${'$'}expected_node"*) ;;
               *)
-                if ! kill -0 "${'$'}pcm_pid" 2>/dev/null; then
+                if [ "${'$'}pcm_live" -eq 1 ]; then
+                  :
+                elif ! kill -0 "${'$'}pcm_pid" 2>/dev/null; then
                   wait "${'$'}pcm_pid"
                   pcm_rc=${'$'}?
                   [ "${'$'}pcm_rc" -eq 0 ] || {
@@ -1128,11 +1141,12 @@ private data class RootAlsaProfile(
                   echo "A2M_ALSA_PCM_SHORT_COMPLETE requested_node=${'$'}expected_node"
                   echo "A2M_ALSA_PCM_COMPLETE node=${'$'}expected_node"
                   exit 0
+                else
+                  echo "A2M_ALSA_PCM_NODE_MISMATCH expected=${'$'}expected_node"
+                  kill "${'$'}pcm_pid" 2>/dev/null || true
+                  wait "${'$'}pcm_pid" 2>/dev/null || true
+                  exit 25
                 fi
-                echo "A2M_ALSA_PCM_NODE_MISMATCH expected=${'$'}expected_node"
-                kill "${'$'}pcm_pid" 2>/dev/null || true
-                wait "${'$'}pcm_pid" 2>/dev/null || true
-                exit 25
                 ;;
             esac
             wait "${'$'}pcm_pid"
@@ -1168,6 +1182,45 @@ private data class RootAlsaProfile(
                         routeQueryCommand = "/data/local/tmp/pixel4_alsa/tinymix -D 0 1611",
                         routeEnableCommand = "/data/local/tmp/pixel4_alsa/tinymix -D 0 1611 1 0",
                         routeDisableCommand = "/data/local/tmp/pixel4_alsa/tinymix -D 0 1611 0 0"
+                    )
+                }
+                "panther" -> {
+                    require(requestedPcmDevice == null || requestedPcmDevice == 1) {
+                        "Pixel 7 direct ALSA only supports PCM1"
+                    }
+                    RootAlsaProfile(
+                        label = "Pixel 7 panther EP2",
+                        expectedDevice = "panther",
+                        card = 0,
+                        pcmDevice = 1,
+                        pcmNode = "/dev/snd/pcmC0D1p",
+                        periodSize = 480,
+                        periodCount = 4,
+                        tinymixPath = "/data/local/tmp/a2m_tinyalsa/tinymix",
+                        routeQueryCommand =
+                            "/data/local/tmp/a2m_tinyalsa/tinymix -D 0 get 317",
+                        routeEnableCommand =
+                            "/data/local/tmp/a2m_tinyalsa/tinymix -D 0 set 317 1",
+                        routeDisableCommand =
+                            "/data/local/tmp/a2m_tinyalsa/tinymix -D 0 set 317 0"
+                    )
+                }
+                "lavender" -> {
+                    require(requestedPcmDevice == null || requestedPcmDevice == 13) {
+                        "Redmi Note 7 direct ALSA only supports PCM13"
+                    }
+                    RootAlsaProfile(
+                        label = "Redmi Note 7 lavender MultiMedia5",
+                        expectedDevice = "lavender",
+                        card = 0,
+                        pcmDevice = 13,
+                        pcmNode = "/dev/snd/pcmC0D13p",
+                        periodSize = 192,
+                        periodCount = 2,
+                        tinymixPath = "/system/bin/tinymix",
+                        routeQueryCommand = "/system/bin/tinymix -D 0 563",
+                        routeEnableCommand = "/system/bin/tinymix -D 0 563 1",
+                        routeDisableCommand = "/system/bin/tinymix -D 0 563 0"
                     )
                 }
                 "b2q" -> when (requestedPcmDevice ?: 9) {
@@ -1209,7 +1262,8 @@ private data class RootAlsaProfile(
                     )
                 }
                 else -> error(
-                    "Direct ALSA는 검증된 Pixel 4(flame)와 ZFlip3(b2q)에서만 지원합니다: " +
+                    "Direct ALSA는 검증된 Pixel 4(flame), Pixel 7(panther), " +
+                        "Redmi Note 7(lavender), ZFlip3(b2q)에서만 지원합니다: " +
                         "${Build.MODEL}/${Build.DEVICE}"
                 )
             }
@@ -1758,10 +1812,22 @@ private class AudioQueuePlayer(
                 error("Direct ALSA root process failed: exit=$exitCode")
             }
             if (
+                rootOutput.contains("Error playing sample", ignoreCase = true) ||
+                rootOutput.contains("Unable to open PCM", ignoreCase = true)
+            ) {
+                error("Direct ALSA helper reported a playback error")
+            }
+            if (
                 !rootOutput.contains("A2M_ALSA_ROOT uid=0(root)") ||
                 !rootOutput.contains("A2M_ALSA_ROUTE_ENABLED") ||
                 !rootOutput.contains("A2M_ALSA_PCM_FDS") ||
                 !rootOutput.contains(profile.pcmNode) ||
+                (
+                    !rootOutput.contains("A2M_ALSA_PCM_LIVE node=${profile.pcmNode}") &&
+                        !rootOutput.contains(
+                            "A2M_ALSA_PCM_SHORT_COMPLETE requested_node=${profile.pcmNode}"
+                        )
+                ) ||
                 !rootOutput.contains("A2M_ALSA_PCM_COMPLETE node=${profile.pcmNode}") ||
                 !rootOutput.contains("A2M_ALSA_ROUTE_DISABLED")
             ) {
