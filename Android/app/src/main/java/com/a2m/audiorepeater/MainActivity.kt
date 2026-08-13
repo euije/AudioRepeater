@@ -1130,7 +1130,12 @@ private data class RootAlsaProfile(
             expected_device=$expectedDeviceValue
             expected_node=$expectedNodeValue
             expected_status=/proc/asound/card${card}/pcm${pcmDevice}p/sub0/status
+            pcm_pid=
             cleanup() {
+              if [ -n "${'$'}{pcm_pid:-}" ] && kill -0 "${'$'}pcm_pid" 2>/dev/null; then
+                kill "${'$'}pcm_pid" 2>/dev/null || true
+                wait "${'$'}pcm_pid" 2>/dev/null || true
+              fi
               $routeDisableCommand >/dev/null 2>&1 || true
               final_route=$($routeQueryCommand 2>&1 || true)
               echo "A2M_ALSA_ROUTE_DISABLED ${'$'}final_route"
@@ -1210,8 +1215,7 @@ private data class RootAlsaProfile(
                     exit "${'$'}pcm_rc"
                   }
                   echo "A2M_ALSA_PCM_SHORT_COMPLETE requested_node=${'$'}expected_node"
-                  echo "A2M_ALSA_PCM_COMPLETE node=${'$'}expected_node"
-                  exit 0
+                  exit 26
                 else
                   echo "A2M_ALSA_PCM_NODE_MISMATCH expected=${'$'}expected_node"
                   kill "${'$'}pcm_pid" 2>/dev/null || true
@@ -2012,60 +2016,63 @@ private class AudioQueuePlayer(
                 "실제: Direct ALSA pcm_write / ${profile.pcmNode} / ${wavSpec.sampleRate} Hz",
                 runId
             )
-            Log.i(
-                LOG_TAG,
-                "ALSA stream start profile=${profile.label} file=${item.displayName} " +
-                    "repeats=${item.repeatCount} aggregate=${aggregateWav.absolutePath}"
-            )
-            val process = ProcessBuilder(
-                "su",
-                "-c",
-                profile.playbackCommand(aggregateWav.absolutePath)
-            )
-                .redirectErrorStream(true)
-                .start()
-            currentRootAlsaProcess = process
+            var streamVerified = false
+            for (attempt in 1..ROOT_ALSA_SHORT_COMPLETION_MAX_ATTEMPTS) {
+                Log.i(
+                    LOG_TAG,
+                    "ALSA stream start profile=${profile.label} file=${item.displayName} " +
+                        "repeats=${item.repeatCount} aggregate=${aggregateWav.absolutePath} " +
+                        "attempt=$attempt/$ROOT_ALSA_SHORT_COMPLETION_MAX_ATTEMPTS"
+                )
+                val process = ProcessBuilder(
+                    "su",
+                    "-c",
+                    profile.playbackCommand(aggregateWav.absolutePath)
+                )
+                    .redirectErrorStream(true)
+                    .start()
+                currentRootAlsaProcess = process
 
-            val completed = process.waitFor(ROOT_ALSA_PROCESS_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-            if (!completed) {
-                process.destroyForcibly()
-                process.waitFor(5, TimeUnit.SECONDS)
-                error("Direct ALSA root process timeout")
-            }
-            rootOutput = process.inputStream.bufferedReader().use { reader -> reader.readText() }
-            rootOutput.lineSequence()
-                .filter { line -> line.isNotBlank() }
-                .forEach { line -> Log.i(LOG_TAG, "ALSA root: $line") }
+                val completed =
+                    process.waitFor(ROOT_ALSA_PROCESS_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                if (!completed) {
+                    process.destroyForcibly()
+                    process.waitFor(5, TimeUnit.SECONDS)
+                    error("Direct ALSA root process timeout")
+                }
+                rootOutput = process.inputStream.bufferedReader().use { reader -> reader.readText() }
+                currentRootAlsaProcess = null
+                rootOutput.lineSequence()
+                    .filter { line -> line.isNotBlank() }
+                    .forEach { line -> Log.i(LOG_TAG, "ALSA root: $line") }
 
-            val exitCode = process.exitValue()
-            if (exitCode != 0) {
-                error("Direct ALSA root process failed: exit=$exitCode")
+                val exitCode = process.exitValue()
+                val shortCompletion =
+                    isDirectAlsaShortCompletion(rootOutput, profile.pcmNode)
+                if (
+                    shortCompletion &&
+                    attempt < ROOT_ALSA_SHORT_COMPLETION_MAX_ATTEMPTS &&
+                    !stopped
+                ) {
+                    val cleanupResult = runRootAlsaCleanup(profile)
+                    Log.w(
+                        LOG_TAG,
+                        "ALSA helper exited before PCM became active; retrying " +
+                            "file=${item.displayName} node=${profile.pcmNode} " +
+                            "cleanupExit=${cleanupResult.first}"
+                    )
+                    postPathStatus("재시도: ALSA PCM 조기 종료 감지", runId)
+                    Thread.sleep(ROOT_ALSA_SHORT_COMPLETION_RETRY_DELAY_MILLIS)
+                    continue
+                }
+
+                directAlsaRuntimeFailure(rootOutput, profile.pcmNode, exitCode)?.let { failure ->
+                    error(failure)
+                }
+                streamVerified = true
+                break
             }
-            if (
-                rootOutput.contains("Error playing sample", ignoreCase = true) ||
-                rootOutput.contains("Unable to open PCM", ignoreCase = true)
-            ) {
-                error("Direct ALSA helper reported a playback error")
-            }
-            if (
-                !rootOutput.contains("A2M_ALSA_ROOT uid=0(root)") ||
-                !rootOutput.contains("A2M_ALSA_ROUTE_ENABLED") ||
-                !rootOutput.contains("A2M_ALSA_PCM_FDS") ||
-                !rootOutput.contains(profile.pcmNode) ||
-                (
-                    !rootOutput.contains("A2M_ALSA_PCM_LIVE node=${profile.pcmNode}") &&
-                        !rootOutput.contains(
-                            "A2M_ALSA_PCM_FD_LIVE node=${profile.pcmNode}"
-                        ) &&
-                        !rootOutput.contains(
-                            "A2M_ALSA_PCM_SHORT_COMPLETE requested_node=${profile.pcmNode}"
-                        )
-                ) ||
-                !rootOutput.contains("A2M_ALSA_PCM_COMPLETE node=${profile.pcmNode}") ||
-                !rootOutput.contains("A2M_ALSA_ROUTE_DISABLED")
-            ) {
-                error("Direct ALSA runtime proof is incomplete")
-            }
+            check(streamVerified) { "Direct ALSA stream was not verified" }
             Log.i(
                 LOG_TAG,
                 "ALSA stream complete file=${item.displayName} node=${profile.pcmNode} " +
@@ -3752,6 +3759,8 @@ private const val ROOT_ALSA_TINYPLAY_SHA256 =
     "a4c29d738c76e73c32b4ac7940de5a72974128c14f6a44aacdf9e82e2b8cf785"
 private const val ROOT_ALSA_ROUTE_STARTUP_MILLIS = 750L
 private const val ROOT_ALSA_PROOF_TAIL_MILLIS = 150L
+private const val ROOT_ALSA_SHORT_COMPLETION_MAX_ATTEMPTS = 2
+private const val ROOT_ALSA_SHORT_COMPLETION_RETRY_DELAY_MILLIS = 150L
 private const val ROOT_ALSA_ROUTE_THREAD_JOIN_MILLIS = 1_000L
 private const val ROOT_ALSA_PROCESS_TIMEOUT_SECONDS = 300L
 private const val ROOT_ALSA_CLEANUP_TIMEOUT_SECONDS = 5L
