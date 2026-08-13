@@ -1402,11 +1402,25 @@ private data class RootAlsaProfile(
                         "Redmi Note 7 direct ALSA supports PCM0, PCM1, PCM4, PCM13, PCM17, or PCM39"
                     )
                 }
-                "beyond1" -> {
-                    require(requestedPcmDevice == null || requestedPcmDevice == 1) {
-                        "Galaxy S10 direct ALSA only supports PCM1"
-                    }
-                    RootAlsaProfile(
+                "beyond1" -> when (requestedPcmDevice ?: 1) {
+                    0 -> RootAlsaProfile(
+                        label = "Galaxy S10 beyond1 RDMA0",
+                        expectedDevice = "beyond1",
+                        card = 0,
+                        pcmDevice = 0,
+                        pcmNode = "/dev/snd/pcmC0D0p",
+                        periodSize = 192,
+                        periodCount = 4,
+                        tinymixPath = "/data/local/tmp/a2m_tinyalsa_s10/tinymix",
+                        routeQueryCommand =
+                            "/data/local/tmp/a2m_tinyalsa_s10/tinymix -D 0 get 1027 " +
+                                "| grep -q '> On' && echo On || echo Off",
+                        routeEnableCommand =
+                            "/data/local/tmp/a2m_tinyalsa_s10/tinymix -D 0 set 1027 1",
+                        routeDisableCommand =
+                            "/data/local/tmp/a2m_tinyalsa_s10/tinymix -D 0 set 1027 0"
+                    )
+                    1 -> RootAlsaProfile(
                         label = "Galaxy S10 beyond1 RDMA1",
                         expectedDevice = "beyond1",
                         card = 0,
@@ -1422,6 +1436,76 @@ private data class RootAlsaProfile(
                             "/data/local/tmp/a2m_tinyalsa_s10/tinymix -D 0 set 1030 1",
                         routeDisableCommand =
                             "/data/local/tmp/a2m_tinyalsa_s10/tinymix -D 0 set 1030 0"
+                    )
+                    2 -> RootAlsaProfile(
+                        label = "Galaxy S10 beyond1 RDMA2",
+                        expectedDevice = "beyond1",
+                        card = 0,
+                        pcmDevice = 2,
+                        pcmNode = "/dev/snd/pcmC0D2p",
+                        periodSize = 192,
+                        periodCount = 4,
+                        tinymixPath = "/data/local/tmp/a2m_tinyalsa_s10/tinymix",
+                        routeQueryCommand =
+                            "/data/local/tmp/a2m_tinyalsa_s10/tinymix -D 0 get 1033 " +
+                                "| grep -q '> On' && echo On || echo Off",
+                        routeEnableCommand =
+                            "/data/local/tmp/a2m_tinyalsa_s10/tinymix -D 0 set 1033 1",
+                        routeDisableCommand =
+                            "/data/local/tmp/a2m_tinyalsa_s10/tinymix -D 0 set 1033 0"
+                    )
+                    101 -> RootAlsaProfile(
+                        label = "Galaxy S10 beyond1 RDMA1 post-route DV829 AG17",
+                        expectedDevice = "beyond1",
+                        card = 0,
+                        pcmDevice = 1,
+                        pcmNode = "/dev/snd/pcmC0D1p",
+                        periodSize = 192,
+                        periodCount = 4,
+                        tinymixPath = "/data/local/tmp/a2m_tinyalsa_s10/tinymix",
+                        routeQueryCommand =
+                            "/data/local/tmp/a2m_tinyalsa_s10/tinymix -D 0 get 1030 " +
+                                "| grep -q '> On' && echo On || echo Off",
+                        routeEnableCommand =
+                            "/data/local/tmp/a2m_tinyalsa_s10/tinymix -D 0 set 1030 1 && " +
+                                "/data/local/tmp/a2m_tinyalsa_s10/tinymix -D 0 set 626 829 && " +
+                                "/data/local/tmp/a2m_tinyalsa_s10/tinymix -D 0 set 646 829 && " +
+                                "/data/local/tmp/a2m_tinyalsa_s10/tinymix -D 0 set 628 17 && " +
+                                "/data/local/tmp/a2m_tinyalsa_s10/tinymix -D 0 set 648 17",
+                        routeDisableCommand =
+                            "/data/local/tmp/a2m_tinyalsa_s10/tinymix -D 0 set 1030 0; " +
+                                "/data/local/tmp/a2m_tinyalsa_s10/tinymix -D 0 set 626 817; " +
+                                "/data/local/tmp/a2m_tinyalsa_s10/tinymix -D 0 set 646 817; " +
+                                "/data/local/tmp/a2m_tinyalsa_s10/tinymix -D 0 set 628 17; " +
+                                "/data/local/tmp/a2m_tinyalsa_s10/tinymix -D 0 set 648 17"
+                    )
+                    102 -> RootAlsaProfile(
+                        label = "Galaxy S10 beyond1 RDMA1 post-route DV821 AG17",
+                        expectedDevice = "beyond1",
+                        card = 0,
+                        pcmDevice = 1,
+                        pcmNode = "/dev/snd/pcmC0D1p",
+                        periodSize = 192,
+                        periodCount = 4,
+                        tinymixPath = "/data/local/tmp/a2m_tinyalsa_s10/tinymix",
+                        routeQueryCommand =
+                            "/data/local/tmp/a2m_tinyalsa_s10/tinymix -D 0 get 1030 " +
+                                "| grep -q '> On' && echo On || echo Off",
+                        routeEnableCommand =
+                            "/data/local/tmp/a2m_tinyalsa_s10/tinymix -D 0 set 1030 1 && " +
+                                "/data/local/tmp/a2m_tinyalsa_s10/tinymix -D 0 set 626 821 && " +
+                                "/data/local/tmp/a2m_tinyalsa_s10/tinymix -D 0 set 646 821 && " +
+                                "/data/local/tmp/a2m_tinyalsa_s10/tinymix -D 0 set 628 17 && " +
+                                "/data/local/tmp/a2m_tinyalsa_s10/tinymix -D 0 set 648 17",
+                        routeDisableCommand =
+                            "/data/local/tmp/a2m_tinyalsa_s10/tinymix -D 0 set 1030 0; " +
+                                "/data/local/tmp/a2m_tinyalsa_s10/tinymix -D 0 set 626 817; " +
+                                "/data/local/tmp/a2m_tinyalsa_s10/tinymix -D 0 set 646 817; " +
+                                "/data/local/tmp/a2m_tinyalsa_s10/tinymix -D 0 set 628 17; " +
+                                "/data/local/tmp/a2m_tinyalsa_s10/tinymix -D 0 set 648 17"
+                    )
+                    else -> error(
+                        "Galaxy S10 direct ALSA supports PCM0, PCM1, PCM2, or profiles 101/102"
                     )
                 }
                 "b2q" -> when (requestedPcmDevice ?: 9) {
