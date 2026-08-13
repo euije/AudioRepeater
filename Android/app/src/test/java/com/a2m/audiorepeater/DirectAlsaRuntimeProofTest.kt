@@ -62,6 +62,20 @@ class DirectAlsaRuntimeProofTest {
     }
 
     @Test
+    fun pcmOpenErrorTakesPriorityOverLegacyShortCompletionMarker() {
+        val output = """
+            Unable to open PCM device 13.
+            A2M_ALSA_PCM_FAILED exit=27
+            A2M_ALSA_PCM_SHORT_COMPLETE requested_node=$pcmNode
+        """.trimIndent()
+
+        assertEquals(
+            "Direct ALSA helper reported a playback error",
+            directAlsaRuntimeFailure(output, pcmNode, exitCode = 27)
+        )
+    }
+
+    @Test
     fun missingLivePcmProofIsRejected() {
         val output = successfulOutput("A2M_ALSA_PCM_STATUS state: PREPARED")
 

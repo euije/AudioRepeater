@@ -1122,6 +1122,7 @@ private data class RootAlsaProfile(
         val expectedHash = shellQuote(ROOT_ALSA_TINYPLAY_SHA256)
         val expectedDeviceValue = shellQuote(expectedDevice)
         val expectedNodeValue = shellQuote(pcmNode)
+        val pcmPidFileValue = shellQuote(pcmPidFile)
         return """
             set -u
             helper=$helper
@@ -1130,12 +1131,62 @@ private data class RootAlsaProfile(
             expected_device=$expectedDeviceValue
             expected_node=$expectedNodeValue
             expected_status=/proc/asound/card${card}/pcm${pcmDevice}p/sub0/status
+            pcm_pid_file=$pcmPidFileValue
+            helper_output="${'$'}{input}.tinyplay-output"
             pcm_pid=
-            cleanup() {
-              if [ -n "${'$'}{pcm_pid:-}" ] && kill -0 "${'$'}pcm_pid" 2>/dev/null; then
-                kill "${'$'}pcm_pid" 2>/dev/null || true
-                wait "${'$'}pcm_pid" 2>/dev/null || true
+            pcm_pid_is_ours() {
+              target_pid=${'$'}1
+              [ -n "${'$'}target_pid" ] || return 1
+              target_exe=${'$'}(readlink /proc/"${'$'}target_pid"/exe 2>/dev/null || true)
+              target_fds=${'$'}(
+                for fd in /proc/"${'$'}target_pid"/fd/*; do
+                  readlink "${'$'}fd" 2>/dev/null || true
+                done
+              )
+              case "${'$'}target_exe ${'$'}target_fds" in
+                *"${'$'}helper"*|*"${'$'}expected_node"*) return 0 ;;
+                *) return 1 ;;
+              esac
+            }
+            terminate_pcm_pid() {
+              target_pid=${'$'}1
+              pcm_pid_is_ours "${'$'}target_pid" || return 0
+              kill "${'$'}target_pid" 2>/dev/null || true
+              stop_probe=0
+              while kill -0 "${'$'}target_pid" 2>/dev/null && [ "${'$'}stop_probe" -lt 20 ]; do
+                stop_probe=${'$'}((stop_probe + 1))
+                sleep 0.01
+              done
+              if kill -0 "${'$'}target_pid" 2>/dev/null; then
+                kill -9 "${'$'}target_pid" 2>/dev/null || true
               fi
+              wait "${'$'}target_pid" 2>/dev/null || true
+              echo "A2M_ALSA_PCM_REAPED pid=${'$'}target_pid node=${'$'}expected_node"
+            }
+            reap_stale_pcm() {
+              tracked_pid=${'$'}(cat "${'$'}pcm_pid_file" 2>/dev/null || true)
+              case "${'$'}tracked_pid" in
+                ''|*[!0-9]*) ;;
+                *) terminate_pcm_pid "${'$'}tracked_pid" ;;
+              esac
+              owner_pid=${'$'}(
+                sed -n 's/.*owner_pid[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' \
+                  "${'$'}expected_status" 2>/dev/null | head -n 1
+              )
+              case "${'$'}owner_pid" in
+                ''|*[!0-9]*) ;;
+                *)
+                  if [ "${'$'}owner_pid" != "${'$'}tracked_pid" ]; then
+                    terminate_pcm_pid "${'$'}owner_pid"
+                  fi
+                  ;;
+              esac
+              rm -f "${'$'}pcm_pid_file"
+            }
+            cleanup() {
+              terminate_pcm_pid "${'$'}{pcm_pid:-}"
+              reap_stale_pcm
+              rm -f "${'$'}helper_output"
               $routeDisableCommand >/dev/null 2>&1 || true
               final_route=$($routeQueryCommand 2>&1 || true)
               echo "A2M_ALSA_ROUTE_DISABLED ${'$'}final_route"
@@ -1159,6 +1210,7 @@ private data class RootAlsaProfile(
               echo "A2M_ALSA_INPUT_UNREADABLE ${'$'}input"
               exit 23
             }
+            reap_stale_pcm
             echo "A2M_ALSA_ROOT ${'$'}(id)"
             echo "A2M_ALSA_PROFILE $label card=$card device=$pcmDevice node=${'$'}expected_node period=$periodSize x $periodCount"
             $routeEnableCommand
@@ -1168,8 +1220,10 @@ private data class RootAlsaProfile(
               *On*) ;;
               *) echo "A2M_ALSA_ROUTE_ENABLE_FAILED"; exit 24 ;;
             esac
-            "${'$'}helper" "${'$'}input" -D $card -d $pcmDevice -p $periodSize -n $periodCount &
+            "${'$'}helper" "${'$'}input" -D $card -d $pcmDevice -p $periodSize -n $periodCount \
+              >"${'$'}helper_output" 2>&1 &
             pcm_pid=${'$'}!
+            echo "${'$'}pcm_pid" >"${'$'}pcm_pid_file"
             echo "A2M_ALSA_PCM_PID ${'$'}pcm_pid"
             fd_targets=
             pcm_status=
@@ -1210,6 +1264,17 @@ private data class RootAlsaProfile(
                 elif ! kill -0 "${'$'}pcm_pid" 2>/dev/null; then
                   wait "${'$'}pcm_pid"
                   pcm_rc=${'$'}?
+                  pcm_pid=
+                  rm -f "${'$'}pcm_pid_file"
+                  helper_log=${'$'}(cat "${'$'}helper_output" 2>/dev/null || true)
+                  rm -f "${'$'}helper_output"
+                  [ -z "${'$'}helper_log" ] || printf '%s\n' "${'$'}helper_log"
+                  case "${'$'}helper_log" in
+                    *"Unable to open PCM"*|*"Error playing sample"*)
+                      echo "A2M_ALSA_PCM_FAILED exit=27"
+                      exit 27
+                      ;;
+                  esac
                   [ "${'$'}pcm_rc" -eq 0 ] || {
                     echo "A2M_ALSA_PCM_FAILED exit=${'$'}pcm_rc"
                     exit "${'$'}pcm_rc"
@@ -1226,6 +1291,17 @@ private data class RootAlsaProfile(
             esac
             wait "${'$'}pcm_pid"
             pcm_rc=${'$'}?
+            pcm_pid=
+            rm -f "${'$'}pcm_pid_file"
+            helper_log=${'$'}(cat "${'$'}helper_output" 2>/dev/null || true)
+            rm -f "${'$'}helper_output"
+            [ -z "${'$'}helper_log" ] || printf '%s\n' "${'$'}helper_log"
+            case "${'$'}helper_log" in
+              *"Unable to open PCM"*|*"Error playing sample"*)
+                echo "A2M_ALSA_PCM_FAILED exit=27"
+                exit 27
+                ;;
+            esac
             [ "${'$'}pcm_rc" -eq 0 ] || {
               echo "A2M_ALSA_PCM_FAILED exit=${'$'}pcm_rc"
               exit "${'$'}pcm_rc"
@@ -1235,8 +1311,62 @@ private data class RootAlsaProfile(
     }
 
     fun cleanupCommand(): String {
-        return "$routeDisableCommand >/dev/null 2>&1 || true"
+        val helper = shellQuote(ROOT_ALSA_TINYPLAY_PATH)
+        val expectedNodeValue = shellQuote(pcmNode)
+        val pcmPidFileValue = shellQuote(pcmPidFile)
+        return """
+            helper=$helper
+            expected_node=$expectedNodeValue
+            expected_status=/proc/asound/card${card}/pcm${pcmDevice}p/sub0/status
+            pcm_pid_file=$pcmPidFileValue
+            terminate_if_ours() {
+              target_pid=${'$'}1
+              [ -n "${'$'}target_pid" ] || return 0
+              target_exe=${'$'}(readlink /proc/"${'$'}target_pid"/exe 2>/dev/null || true)
+              target_fds=${'$'}(
+                for fd in /proc/"${'$'}target_pid"/fd/*; do
+                  readlink "${'$'}fd" 2>/dev/null || true
+                done
+              )
+              case "${'$'}target_exe ${'$'}target_fds" in
+                *"${'$'}helper"*|*"${'$'}expected_node"*) ;;
+                *) return 0 ;;
+              esac
+              kill "${'$'}target_pid" 2>/dev/null || true
+              stop_probe=0
+              while kill -0 "${'$'}target_pid" 2>/dev/null && [ "${'$'}stop_probe" -lt 20 ]; do
+                stop_probe=${'$'}((stop_probe + 1))
+                sleep 0.01
+              done
+              if kill -0 "${'$'}target_pid" 2>/dev/null; then
+                kill -9 "${'$'}target_pid" 2>/dev/null || true
+              fi
+              echo "A2M_ALSA_PCM_REAPED pid=${'$'}target_pid node=${'$'}expected_node"
+            }
+            tracked_pid=${'$'}(cat "${'$'}pcm_pid_file" 2>/dev/null || true)
+            case "${'$'}tracked_pid" in
+              ''|*[!0-9]*) ;;
+              *) terminate_if_ours "${'$'}tracked_pid" ;;
+            esac
+            owner_pid=${'$'}(
+              sed -n 's/.*owner_pid[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' \
+                "${'$'}expected_status" 2>/dev/null | head -n 1
+            )
+            case "${'$'}owner_pid" in
+              ''|*[!0-9]*) ;;
+              *)
+                if [ "${'$'}owner_pid" != "${'$'}tracked_pid" ]; then
+                  terminate_if_ours "${'$'}owner_pid"
+                fi
+                ;;
+            esac
+            rm -f "${'$'}pcm_pid_file"
+            $routeDisableCommand >/dev/null 2>&1 || true
+        """.trimIndent()
     }
+
+    private val pcmPidFile: String
+        get() = "$ROOT_ALSA_RUNTIME_DIRECTORY/pcm-card${card}-device${pcmDevice}.pid"
 
     companion object {
         fun current(requestedPcmDevice: Int? = null): RootAlsaProfile {
@@ -3837,8 +3967,9 @@ private const val PERSISTED_PLAYLIST_ROUTE_ASSIST = "route-assist"
 private const val PERSISTED_PLAYLIST_PCM_DEVICE = "pcm-device"
 private const val PERSISTED_PLAYLIST_DISABLED_PATHS = "disabled-paths"
 private const val ROOT_ALSA_CACHE_DIRECTORY_NAME = "root-alsa"
+private const val ROOT_ALSA_RUNTIME_DIRECTORY = "/data/local/tmp/audiorepeater_alsa"
 private const val ROOT_ALSA_TINYPLAY_PATH =
-    "/data/local/tmp/audiorepeater_alsa/tinyplay_pcm_write"
+    "$ROOT_ALSA_RUNTIME_DIRECTORY/tinyplay_pcm_write"
 private const val ROOT_ALSA_TINYPLAY_SHA256 =
     "a4c29d738c76e73c32b4ac7940de5a72974128c14f6a44aacdf9e82e2b8cf785"
 private const val ROOT_ALSA_ROUTE_STARTUP_MILLIS = 750L

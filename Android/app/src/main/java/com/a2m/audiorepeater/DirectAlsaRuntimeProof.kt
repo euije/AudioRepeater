@@ -8,18 +8,18 @@ internal fun directAlsaRuntimeFailure(
     pcmNode: String,
     exitCode: Int
 ): String? {
-    if (isDirectAlsaShortCompletion(rootOutput, pcmNode)) {
-        return "Direct ALSA helper exited before PCM playback became active: $pcmNode"
-    }
-    if (exitCode != 0) {
-        return "Direct ALSA root process failed: exit=$exitCode"
-    }
     if (
         rootOutput.contains("Error playing sample", ignoreCase = true) ||
         rootOutput.contains("Unable to open PCM", ignoreCase = true) ||
         rootOutput.contains("A2M_ALSA_PCM_FAILED")
     ) {
         return "Direct ALSA helper reported a playback error"
+    }
+    if (isDirectAlsaShortCompletion(rootOutput, pcmNode)) {
+        return "Direct ALSA helper exited before PCM playback became active: $pcmNode"
+    }
+    if (exitCode != 0) {
+        return "Direct ALSA root process failed: exit=$exitCode"
     }
 
     val pcmBecameActive =
