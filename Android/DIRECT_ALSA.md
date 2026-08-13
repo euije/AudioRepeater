@@ -12,6 +12,25 @@ AudioRepeater has two Direct ALSA options:
   EXCLUSIVE option is selected.
 - The two Direct ALSA options and AAudio EXCLUSIVE are mutually exclusive in the UI.
 
+## Simultaneous UNPROCESSED microphone recording
+
+Enable `마이크 동시 녹음 (UNPROCESSED)` before starting the queue to record the
+device microphone while any playback path, including Direct ALSA, is active.
+The app requests `MediaRecorder.AudioSource.UNPROCESSED` without falling back to
+a processed input source and records a single 48 kHz mono PCM16 WAV for the
+whole enabled queue. Recordings are stored in the app-specific external Music
+directory under `AudioRepeater/recordings`.
+
+ADB-launched tests can enable the option with:
+
+```text
+--ez debugRecordUnprocessed true
+```
+
+Successful logs contain `micRecording start` and `micRecording complete` with
+the requested and actual source, device capability property, format, byte count,
+duration, and output path.
+
 ## init-hijack (Pixel 4 locked bootloader, no `su`)
 
 `--ez debugUseDirectAlsaInitHijack true` / `false`.

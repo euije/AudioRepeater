@@ -1,8 +1,10 @@
 package com.a2m.audiorepeater
 
+import android.Manifest
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
@@ -20,6 +22,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -27,6 +30,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -58,6 +62,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.TriStateCheckbox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -70,6 +75,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -128,6 +134,7 @@ private fun AudioRepeaterApp(debugAudioConfig: DebugAudioConfig? = null) {
     var sameFileDelayText by rememberSaveable { mutableStateOf("0") }
     var differentFileDelayText by rememberSaveable { mutableStateOf("0") }
     var playbackState by remember { mutableStateOf<PlaybackUiState>(PlaybackUiState.Idle) }
+    var recordingState by remember { mutableStateOf<RecordingUiState>(RecordingUiState.Idle) }
     var isImporting by remember { mutableStateOf(false) }
     var useAaudioExclusive by rememberSaveable {
         mutableStateOf(debugAudioConfig?.useAaudioExclusive ?: false)
@@ -138,6 +145,10 @@ private fun AudioRepeaterApp(debugAudioConfig: DebugAudioConfig? = null) {
     var useDirectAlsaInitHijack by rememberSaveable {
         mutableStateOf(debugAudioConfig?.useDirectAlsaInitHijack ?: false)
     }
+    var recordUnprocessed by rememberSaveable {
+        mutableStateOf(debugAudioConfig?.recordUnprocessed ?: false)
+    }
+    var pendingPlaybackRequest by remember { mutableStateOf<QueuePlaybackRequest?>(null) }
     var playbackPathStatus by remember {
         mutableStateOf(
             selectedPlaybackPathStatus(
@@ -152,6 +163,16 @@ private fun AudioRepeaterApp(debugAudioConfig: DebugAudioConfig? = null) {
             context = context.applicationContext,
             onStateChanged = { playbackState = it },
             onPathStatusChanged = { playbackPathStatus = it },
+            onRecordingStateChanged = { state ->
+                recordingState = state
+                if (state is RecordingUiState.Completed) {
+                    scope.launch {
+                        snackbarHostState.showSnackbar(
+                            "UNPROCESSED 녹음 완료: ${File(state.filePath).name}"
+                        )
+                    }
+                }
+            },
             onError = { message ->
                 scope.launch {
                     snackbarHostState.showSnackbar(message)
@@ -207,6 +228,33 @@ private fun AudioRepeaterApp(debugAudioConfig: DebugAudioConfig? = null) {
         }
     }
 
+    val recordingPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        val request = pendingPlaybackRequest
+        pendingPlaybackRequest = null
+        if (granted && request != null) {
+            player.play(request)
+        } else if (!granted) {
+            scope.launch {
+                snackbarHostState.showSnackbar("마이크 녹음을 위해 권한이 필요합니다")
+            }
+        }
+    }
+    val startOrRequestPlayback: (QueuePlaybackRequest) -> Unit = { request ->
+        val needsPermission = request.recordUnprocessed &&
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.RECORD_AUDIO
+            ) != PackageManager.PERMISSION_GRANTED
+        if (needsPermission) {
+            pendingPlaybackRequest = request
+            recordingPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        } else {
+            player.play(request)
+        }
+    }
+
     DisposableEffect(Unit) {
         onDispose {
             player.release()
@@ -231,6 +279,7 @@ private fun AudioRepeaterApp(debugAudioConfig: DebugAudioConfig? = null) {
                 useLowLatencyAudioTrack = false,
                 forceStereoRouteAssist = false,
                 directAlsaPcmDevice = null,
+                recordUnprocessed = false,
                 autoPlayOnLoad = true
             )
             Log.i(LOG_TAG, "debug fallback files=${debugFiles.size}")
@@ -251,6 +300,7 @@ private fun AudioRepeaterApp(debugAudioConfig: DebugAudioConfig? = null) {
                     useLowLatencyAudioTrack = currentConfig?.useLowLatencyAudioTrack ?: false,
                     forceStereoRouteAssist = currentConfig?.forceStereoRouteAssist ?: false,
                     directAlsaPcmDevice = currentConfig?.directAlsaPcmDevice,
+                    recordUnprocessed = currentConfig?.recordUnprocessed ?: false,
                     autoPlayOnLoad = currentConfig?.autoPlayOnLoad ?: true
                 )
                 Log.i(LOG_TAG, "debug path fallback files=${debugFiles.size}")
@@ -283,6 +333,7 @@ private fun AudioRepeaterApp(debugAudioConfig: DebugAudioConfig? = null) {
         useAaudioExclusive = activeConfig.useAaudioExclusive
         useDirectAlsa = activeConfig.useDirectAlsa
         useDirectAlsaInitHijack = activeConfig.useDirectAlsaInitHijack
+        recordUnprocessed = activeConfig.recordUnprocessed
         playbackPathStatus = selectedPlaybackPathStatus(
             activeConfig.useDirectAlsa,
             activeConfig.useAaudioExclusive,
@@ -290,23 +341,26 @@ private fun AudioRepeaterApp(debugAudioConfig: DebugAudioConfig? = null) {
         )
         if (activeConfig.autoPlayOnLoad) {
             context.savePersistedDebugAudioConfig(activeConfig)
-            player.play(
-                items = debugItems.filter { item -> item.isPlaybackEnabled }.map { item ->
+            startOrRequestPlayback(
+                QueuePlaybackRequest(
+                    items = debugItems.filter { item -> item.isPlaybackEnabled }.map { item ->
                     QueueItem(
                         sourceUri = item.uri,
                         localPath = item.localPath,
                         displayName = item.displayName,
                         repeatCount = activeConfig.repeatCount
                     )
-                },
-                sameFileDelayMillis = activeConfig.sameFileDelaySeconds.toDelayMillisOrNull() ?: 0L,
-                differentFileDelayMillis = activeConfig.differentFileDelaySeconds.toDelayMillisOrNull() ?: 0L,
-                useAaudioExclusive = activeConfig.useAaudioExclusive,
-                useDirectAlsa = activeConfig.useDirectAlsa,
-                useDirectAlsaInitHijack = activeConfig.useDirectAlsaInitHijack,
-                useLowLatencyAudioTrack = activeConfig.useLowLatencyAudioTrack,
-                forceStereoRouteAssist = activeConfig.forceStereoRouteAssist,
-                directAlsaPcmDevice = activeConfig.directAlsaPcmDevice
+                    },
+                    sameFileDelayMillis = activeConfig.sameFileDelaySeconds.toDelayMillisOrNull() ?: 0L,
+                    differentFileDelayMillis = activeConfig.differentFileDelaySeconds.toDelayMillisOrNull() ?: 0L,
+                    useAaudioExclusive = activeConfig.useAaudioExclusive,
+                    useDirectAlsa = activeConfig.useDirectAlsa,
+                    useDirectAlsaInitHijack = activeConfig.useDirectAlsaInitHijack,
+                    useLowLatencyAudioTrack = activeConfig.useLowLatencyAudioTrack,
+                    forceStereoRouteAssist = activeConfig.forceStereoRouteAssist,
+                    directAlsaPcmDevice = activeConfig.directAlsaPcmDevice,
+                    recordUnprocessed = activeConfig.recordUnprocessed
+                )
             )
         } else {
             Log.i(LOG_TAG, "restored persisted debug list files=${debugItems.size} without autoplay")
@@ -329,14 +383,15 @@ private fun AudioRepeaterApp(debugAudioConfig: DebugAudioConfig? = null) {
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .padding(horizontal = 20.dp, vertical = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Checkbox(
+                CompactOptionCheckbox(
+                    label = "ALSA(root)",
                     checked = useDirectAlsa,
                     onCheckedChange = { checked ->
                         useDirectAlsa = checked
@@ -350,26 +405,11 @@ private fun AudioRepeaterApp(debugAudioConfig: DebugAudioConfig? = null) {
                             useDirectAlsaInitHijack
                         )
                     },
-                    enabled = !isPlaying && !useDirectAlsaInitHijack
+                    enabled = !isPlaying,
+                    modifier = Modifier.weight(1.15f)
                 )
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "Direct ALSA (root / TinyALSA pcm_write)",
-                        style = MaterialTheme.typography.bodyLarge
-                    )
-                    Text(
-                        text = "지원 기기용 · root와 사전 배포된 ALSA 도구 필요",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Checkbox(
+                CompactOptionCheckbox(
+                    label = "ALSA(init)",
                     checked = useDirectAlsaInitHijack,
                     onCheckedChange = { checked ->
                         useDirectAlsaInitHijack = checked
@@ -383,30 +423,16 @@ private fun AudioRepeaterApp(debugAudioConfig: DebugAudioConfig? = null) {
                             checked
                         )
                     },
-                    enabled = !isPlaying && !useDirectAlsa
+                    enabled = !isPlaying,
+                    modifier = Modifier.weight(1f)
                 )
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "Direct ALSA (init-hijack)",
-                        style = MaterialTheme.typography.bodyLarge
-                    )
-                    Text(
-                        text = "Pixel 4 · CVE-2023-33107 root · 보안 경고",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error
-                    )
-                }
-            }
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Checkbox(
+                CompactOptionCheckbox(
+                    label = "AAudio",
                     checked = useAaudioExclusive,
                     onCheckedChange = { checked ->
                         useAaudioExclusive = checked
                         if (checked) {
+                            useDirectAlsa = false
                             useDirectAlsaInitHijack = false
                         }
                         playbackPathStatus = selectedPlaybackPathStatus(
@@ -415,20 +441,34 @@ private fun AudioRepeaterApp(debugAudioConfig: DebugAudioConfig? = null) {
                             useDirectAlsaInitHijack
                         )
                     },
-                    enabled = !isPlaying && !useDirectAlsa && !useDirectAlsaInitHijack
+                    enabled = !isPlaying,
+                    modifier = Modifier.weight(0.85f)
+                )
+            }
+            Text(
+                text = playbackPathStatus,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Checkbox(
+                    checked = recordUnprocessed,
+                    onCheckedChange = { checked -> recordUnprocessed = checked },
+                    enabled = !isPlaying,
+                    modifier = Modifier.size(36.dp)
                 )
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "AAudio EXCLUSIVE (MMAP)",
-                        style = MaterialTheme.typography.bodyLarge
+                        text = "마이크 동시 녹음 (UNPROCESSED)",
+                        style = MaterialTheme.typography.bodySmall
                     )
-                    Text(
-                        text = playbackPathStatus,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                    RecordingStatusText(state = recordingState)
                 }
             }
 
@@ -457,24 +497,21 @@ private fun AudioRepeaterApp(debugAudioConfig: DebugAudioConfig? = null) {
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(text = if (isImporting) "추가 중" else "여러개 추가")
                 }
-            }
-
-            FilledTonalButton(
-                onClick = {
-                    items.indices.forEach { index ->
-                        items[index] = items[index].copy(repeatText = defaultRepeatText)
-                    }
-                },
-                modifier = Modifier.fillMaxWidth(),
-                enabled = !isPlaying && defaultRepeat != null && items.isNotEmpty()
-            ) {
-                Icon(
-                    imageVector = Icons.Default.DoneAll,
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(text = "전체 반복 적용")
+                IconButton(
+                    onClick = {
+                        items.indices.forEach { index ->
+                            items[index] = items[index].copy(repeatText = defaultRepeatText)
+                        }
+                    },
+                    enabled = !isPlaying && defaultRepeat != null && items.isNotEmpty(),
+                    modifier = Modifier.size(40.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.DoneAll,
+                        contentDescription = "전체 반복 적용",
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
             }
 
             Row(
@@ -516,16 +553,19 @@ private fun AudioRepeaterApp(debugAudioConfig: DebugAudioConfig? = null) {
                                 )
                             }
                         }
-                        player.play(
-                            items = queue,
-                            sameFileDelayMillis = sameFileDelayMillis ?: 0L,
-                            differentFileDelayMillis = differentFileDelayMillis ?: 0L,
-                            useAaudioExclusive = useAaudioExclusive,
-                            useDirectAlsa = useDirectAlsa,
-                            useDirectAlsaInitHijack = useDirectAlsaInitHijack,
-                            useLowLatencyAudioTrack = false,
-                            forceStereoRouteAssist = false,
-                            directAlsaPcmDevice = null
+                        startOrRequestPlayback(
+                            QueuePlaybackRequest(
+                                items = queue,
+                                sameFileDelayMillis = sameFileDelayMillis ?: 0L,
+                                differentFileDelayMillis = differentFileDelayMillis ?: 0L,
+                                useAaudioExclusive = useAaudioExclusive,
+                                useDirectAlsa = useDirectAlsa,
+                                useDirectAlsaInitHijack = useDirectAlsaInitHijack,
+                                useLowLatencyAudioTrack = false,
+                                forceStereoRouteAssist = false,
+                                directAlsaPcmDevice = null,
+                                recordUnprocessed = recordUnprocessed
+                            )
                         )
                     },
                     enabled = canPlay
@@ -536,7 +576,7 @@ private fun AudioRepeaterApp(debugAudioConfig: DebugAudioConfig? = null) {
                         modifier = Modifier.size(18.dp)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text(text = "재생")
+                    Text(text = if (recordUnprocessed) "재생+녹음" else "재생")
                 }
 
                 FilledTonalButton(
@@ -558,17 +598,45 @@ private fun AudioRepeaterApp(debugAudioConfig: DebugAudioConfig? = null) {
                 )
             }
 
-            Text(
-                text = "목록 (${items.size})",
-                style = MaterialTheme.typography.titleMedium
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "목록 (${items.count { it.isPlaybackEnabled }}/${items.size})",
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.titleSmall
+                )
+                val selectionState = when {
+                    items.isEmpty() || items.none { it.isPlaybackEnabled } -> ToggleableState.Off
+                    items.all { it.isPlaybackEnabled } -> ToggleableState.On
+                    else -> ToggleableState.Indeterminate
+                }
+                TriStateCheckbox(
+                    state = selectionState,
+                    onClick = {
+                        val enableAll = selectionState != ToggleableState.On
+                        items.indices.forEach { index ->
+                            val item = items[index]
+                            items[index] = item.copy(isPlaybackEnabled = enableAll)
+                            context.setPersistedPlaybackEnabled(item.localPath, enableAll)
+                        }
+                    },
+                    enabled = !isPlaying && items.isNotEmpty(),
+                    modifier = Modifier.size(36.dp)
+                )
+                Text(
+                    text = "전체 선택",
+                    style = MaterialTheme.typography.labelMedium
+                )
+            }
 
             if (items.isEmpty()) {
                 EmptyListSurface(modifier = Modifier.weight(1f))
             } else {
                 LazyColumn(
                     modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                    verticalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
                     itemsIndexed(
                         items = items,
@@ -608,6 +676,33 @@ private fun AudioRepeaterApp(debugAudioConfig: DebugAudioConfig? = null) {
 }
 
 @Composable
+private fun CompactOptionCheckbox(
+    label: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    enabled: Boolean,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Checkbox(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            enabled = enabled,
+            modifier = Modifier.size(36.dp)
+        )
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+@Composable
 private fun RepeatTextField(
     value: String,
     onValueChange: (String) -> Unit,
@@ -618,9 +713,10 @@ private fun RepeatTextField(
     OutlinedTextField(
         value = value,
         onValueChange = onValueChange,
-        modifier = modifier,
+        modifier = modifier.height(56.dp),
         enabled = enabled,
         label = { Text(text = label) },
+        textStyle = MaterialTheme.typography.bodySmall,
         isError = value.toPositiveRepeatCountOrNull() == null,
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
         singleLine = true
@@ -638,9 +734,10 @@ private fun DelayTextField(
     OutlinedTextField(
         value = value,
         onValueChange = onValueChange,
-        modifier = modifier,
+        modifier = modifier.height(56.dp),
         enabled = enabled,
         label = { Text(text = label) },
+        textStyle = MaterialTheme.typography.bodySmall,
         isError = value.toDelayMillisOrNull() == null,
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
         singleLine = true
@@ -669,6 +766,43 @@ private fun PlaybackStatusText(
         overflow = TextOverflow.Ellipsis,
         style = MaterialTheme.typography.bodyMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
+}
+
+@Composable
+private fun RecordingStatusText(state: RecordingUiState) {
+    val text = when (state) {
+        RecordingUiState.Idle -> "48 kHz · mono · PCM16 WAV"
+        is RecordingUiState.Recording -> {
+            val supportNote = if (state.platformReportsUnprocessedSupport == false) {
+                " · 기기 원시지원 미보고"
+            } else {
+                ""
+            }
+            "녹음 중: ${File(state.filePath).name}$supportNote"
+        }
+        is RecordingUiState.Completed -> {
+            val seconds = state.durationMillis / 1_000.0
+            val supportNote = if (state.platformReportsUnprocessedSupport == false) {
+                " · 기기 원시지원 미보고"
+            } else {
+                ""
+            }
+            "완료: ${File(state.filePath).name} · " +
+                "${String.format(Locale.US, "%.1f", seconds)}초$supportNote"
+        }
+        is RecordingUiState.Failed -> "녹음 실패: ${state.message}"
+    }
+    Text(
+        text = text,
+        style = MaterialTheme.typography.bodySmall,
+        color = if (state is RecordingUiState.Failed) {
+            MaterialTheme.colorScheme.error
+        } else {
+            MaterialTheme.colorScheme.onSurfaceVariant
+        },
+        maxLines = 2,
+        overflow = TextOverflow.Ellipsis
     )
 }
 
@@ -723,20 +857,21 @@ private fun WavItemRow(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(12.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                .padding(horizontal = 8.dp, vertical = 5.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Checkbox(
                 checked = item.isPlaybackEnabled,
                 onCheckedChange = onPlaybackEnabledChange,
-                enabled = enabled
+                enabled = enabled,
+                modifier = Modifier.size(36.dp)
             )
 
             Icon(
                 imageVector = Icons.Default.MusicNote,
                 contentDescription = null,
-                modifier = Modifier.size(24.dp)
+                modifier = Modifier.size(20.dp)
             )
 
             Column(modifier = Modifier.weight(1f)) {
@@ -752,13 +887,14 @@ private fun WavItemRow(
                 value = item.repeatText,
                 onValueChange = onRepeatChange,
                 label = "횟수",
-                modifier = Modifier.width(88.dp),
+                modifier = Modifier.width(82.dp),
                 enabled = enabled && item.isPlaybackEnabled
             )
 
             IconButton(
                 onClick = onDelete,
-                enabled = enabled
+                enabled = enabled,
+                modifier = Modifier.size(40.dp)
             ) {
                 Icon(
                     imageVector = Icons.Default.Delete,
@@ -786,6 +922,19 @@ private data class QueueItem(
     val repeatCount: Int
 )
 
+private data class QueuePlaybackRequest(
+    val items: List<QueueItem>,
+    val sameFileDelayMillis: Long,
+    val differentFileDelayMillis: Long,
+    val useAaudioExclusive: Boolean,
+    val useDirectAlsa: Boolean,
+    val useDirectAlsaInitHijack: Boolean,
+    val useLowLatencyAudioTrack: Boolean,
+    val forceStereoRouteAssist: Boolean,
+    val directAlsaPcmDevice: Int?,
+    val recordUnprocessed: Boolean
+)
+
 private data class ImportResult(
     val items: List<WavAudioItem>,
     val skippedCount: Int
@@ -802,6 +951,7 @@ private data class DebugAudioConfig(
     val useLowLatencyAudioTrack: Boolean,
     val forceStereoRouteAssist: Boolean,
     val directAlsaPcmDevice: Int?,
+    val recordUnprocessed: Boolean,
     val autoPlayOnLoad: Boolean
 ) {
     companion object {
@@ -828,6 +978,8 @@ private data class DebugAudioConfig(
                 } else {
                     null
                 },
+                recordUnprocessed =
+                    intent.getBooleanExtra(DEBUG_RECORD_UNPROCESSED_EXTRA, false),
                 autoPlayOnLoad = true
             )
         }
@@ -847,6 +999,7 @@ private fun Context.savePersistedDebugAudioConfig(config: DebugAudioConfig) {
         .putBoolean(PERSISTED_PLAYLIST_LOW_LATENCY, config.useLowLatencyAudioTrack)
         .putBoolean(PERSISTED_PLAYLIST_ROUTE_ASSIST, config.forceStereoRouteAssist)
         .putInt(PERSISTED_PLAYLIST_PCM_DEVICE, config.directAlsaPcmDevice ?: -1)
+        .putBoolean(PERSISTED_PLAYLIST_RECORD_UNPROCESSED, config.recordUnprocessed)
         .apply()
 }
 
@@ -877,6 +1030,8 @@ private fun Context.loadPersistedDebugAudioConfig(): DebugAudioConfig? {
             preferences.getBoolean(PERSISTED_PLAYLIST_ROUTE_ASSIST, false),
         directAlsaPcmDevice = preferences.getInt(PERSISTED_PLAYLIST_PCM_DEVICE, -1)
             .takeIf { device -> device >= 0 },
+        recordUnprocessed =
+            preferences.getBoolean(PERSISTED_PLAYLIST_RECORD_UNPROCESSED, false),
         autoPlayOnLoad = false
     )
 }
@@ -974,6 +1129,24 @@ private sealed interface PlaybackUiState {
         val nextRepeat: Int,
         val totalRepeats: Int
     ) : PlaybackUiState
+}
+
+private sealed interface RecordingUiState {
+    data object Idle : RecordingUiState
+
+    data class Recording(
+        val filePath: String,
+        val platformReportsUnprocessedSupport: Boolean?
+    ) : RecordingUiState
+
+    data class Completed(
+        val filePath: String,
+        val dataBytes: Long,
+        val durationMillis: Long,
+        val platformReportsUnprocessedSupport: Boolean?
+    ) : RecordingUiState
+
+    data class Failed(val message: String) : RecordingUiState
 }
 
 private data class AaudioStreamInfo(
@@ -1696,6 +1869,7 @@ private class AudioQueuePlayer(
     private val context: Context,
     private val onStateChanged: (PlaybackUiState) -> Unit,
     private val onPathStatusChanged: (String) -> Unit,
+    private val onRecordingStateChanged: (RecordingUiState) -> Unit,
     private val onError: (String) -> Unit
 ) {
     private val handler = Handler(Looper.getMainLooper())
@@ -1727,12 +1901,30 @@ private class AudioQueuePlayer(
     private var currentRootAlsaProfile: RootAlsaProfile? = null
 
     @Volatile
+    private var currentMicRecorder: UnprocessedMicRecorder? = null
+
+    @Volatile
     private var initHijackShell: InitHijackSession? = null
 
     private val initHijackShellLock = Any()
 
     @Volatile
     private var playbackRunId = 0
+
+    fun play(request: QueuePlaybackRequest) {
+        play(
+            items = request.items,
+            sameFileDelayMillis = request.sameFileDelayMillis,
+            differentFileDelayMillis = request.differentFileDelayMillis,
+            useAaudioExclusive = request.useAaudioExclusive,
+            useDirectAlsa = request.useDirectAlsa,
+            useDirectAlsaInitHijack = request.useDirectAlsaInitHijack,
+            useLowLatencyAudioTrack = request.useLowLatencyAudioTrack,
+            forceStereoRouteAssist = request.forceStereoRouteAssist,
+            directAlsaPcmDevice = request.directAlsaPcmDevice,
+            recordUnprocessed = request.recordUnprocessed
+        )
+    }
 
     fun play(
         items: List<QueueItem>,
@@ -1743,7 +1935,8 @@ private class AudioQueuePlayer(
         useDirectAlsaInitHijack: Boolean,
         useLowLatencyAudioTrack: Boolean,
         forceStereoRouteAssist: Boolean,
-        directAlsaPcmDevice: Int?
+        directAlsaPcmDevice: Int?,
+        recordUnprocessed: Boolean
     ) {
         stop()
         if (items.isEmpty()) return
@@ -1762,16 +1955,17 @@ private class AudioQueuePlayer(
                 useDirectAlsaInitHijack = useDirectAlsaInitHijack,
                 useLowLatencyAudioTrack = useLowLatencyAudioTrack,
                 forceStereoRouteAssist = forceStereoRouteAssist,
-                directAlsaPcmDevice = directAlsaPcmDevice
+                directAlsaPcmDevice = directAlsaPcmDevice,
+                recordUnprocessed = recordUnprocessed
             )
         }
     }
 
     fun stop() {
-        playbackRunId += 1
         stopped = true
         playbackJob?.cancel()
         playbackJob = null
+        currentMicRecorder?.requestStop()
         stopCurrentTrack()
         postState(PlaybackUiState.Idle, runId = null)
     }
@@ -1793,7 +1987,8 @@ private class AudioQueuePlayer(
         useDirectAlsaInitHijack: Boolean,
         useLowLatencyAudioTrack: Boolean,
         forceStereoRouteAssist: Boolean,
-        directAlsaPcmDevice: Int?
+        directAlsaPcmDevice: Int?,
+        recordUnprocessed: Boolean
     ) {
         val requestedPath = when {
             useDirectAlsaInitHijack -> "Direct ALSA init-hijack"
@@ -1805,9 +2000,35 @@ private class AudioQueuePlayer(
         Log.i(
             LOG_TAG,
             "playQueue start items=${items.size} sameDelay=$sameFileDelayMillis " +
-                "diffDelay=$differentFileDelayMillis requestedPath=$requestedPath"
+                "diffDelay=$differentFileDelayMillis requestedPath=$requestedPath " +
+                "recordUnprocessed=$recordUnprocessed"
         )
+        var sessionRecorder: UnprocessedMicRecorder? = null
         try {
+            if (recordUnprocessed) {
+                val recorder = UnprocessedMicRecorder.create(context)
+                recorder.start()
+                sessionRecorder = recorder
+                currentMicRecorder = recorder
+                Log.i(
+                    LOG_TAG,
+                    "micRecording start requestedSource=UNPROCESSED(9) " +
+                        "actualSource=${recorder.actualAudioSource} " +
+                        "platformSupport=${recorder.platformReportsUnprocessedSupport} " +
+                        "sampleRate=${recorder.sampleRate} channels=${recorder.channelCount} " +
+                        "file=${recorder.outputFile.absolutePath}"
+                )
+                postRecordingState(
+                    RecordingUiState.Recording(
+                        filePath = recorder.outputFile.absolutePath,
+                        platformReportsUnprocessedSupport =
+                            recorder.platformReportsUnprocessedSupport
+                    ),
+                    runId
+                )
+            } else {
+                postRecordingState(RecordingUiState.Idle, runId)
+            }
             if (useDirectAlsaInitHijack) {
                 playInitHijackQueue(
                     runId = runId,
@@ -1911,7 +2132,49 @@ private class AudioQueuePlayer(
                     runId
                 )
             }
+            if (recordUnprocessed && sessionRecorder == null) {
+                postRecordingState(
+                    RecordingUiState.Failed(
+                        exception.message ?: exception.javaClass.simpleName
+                    ),
+                    runId
+                )
+            }
         } finally {
+            sessionRecorder?.let { recorder ->
+                if (currentMicRecorder === recorder) currentMicRecorder = null
+                runCatching { recorder.finish() }
+                    .onSuccess { result ->
+                        Log.i(
+                            LOG_TAG,
+                            "micRecording complete requestedSource=UNPROCESSED(9) " +
+                                "actualSource=${result.audioSource} " +
+                                "platformSupport=${result.platformReportsUnprocessedSupport} " +
+                                "sampleRate=${result.sampleRate} channels=${result.channelCount} " +
+                                "dataBytes=${result.dataBytes} durationMs=${result.durationMillis} " +
+                                "file=${result.file.absolutePath}"
+                        )
+                        postRecordingState(
+                            RecordingUiState.Completed(
+                                filePath = result.file.absolutePath,
+                                dataBytes = result.dataBytes,
+                                durationMillis = result.durationMillis,
+                                platformReportsUnprocessedSupport =
+                                    result.platformReportsUnprocessedSupport
+                            ),
+                            runId
+                        )
+                    }
+                    .onFailure { exception ->
+                        Log.e(LOG_TAG, "UNPROCESSED microphone finalization failed", exception)
+                        postRecordingState(
+                            RecordingUiState.Failed(
+                                exception.message ?: exception.javaClass.simpleName
+                            ),
+                            runId
+                        )
+                    }
+            }
             Log.i(LOG_TAG, "playQueue finish stopped=$stopped")
             stopped = true
             postState(PlaybackUiState.Idle, runId = runId)
@@ -3411,6 +3674,14 @@ private class AudioQueuePlayer(
         }
     }
 
+    private fun postRecordingState(state: RecordingUiState, runId: Int) {
+        handler.post {
+            if (runId == playbackRunId) {
+                onRecordingStateChanged(state)
+            }
+        }
+    }
+
     private fun postError(message: String, runId: Int) {
         Log.e(LOG_TAG, message)
         handler.post {
@@ -3954,6 +4225,7 @@ private const val DEBUG_DIRECT_ALSA_INIT_HIJACK_EXTRA = "debugUseDirectAlsaInitH
 private const val DEBUG_LOW_LATENCY_AUDIOTRACK_EXTRA = "debugUseLowLatencyAudioTrack"
 private const val DEBUG_FORCE_STEREO_ROUTE_ASSIST_EXTRA = "debugForceStereoRouteAssist"
 private const val DEBUG_DIRECT_ALSA_PCM_DEVICE_EXTRA = "debugDirectAlsaPcmDevice"
+private const val DEBUG_RECORD_UNPROCESSED_EXTRA = "debugRecordUnprocessed"
 private const val PERSISTED_PLAYLIST_PREFERENCES = "persisted-playlist"
 private const val PERSISTED_PLAYLIST_PATHS = "paths"
 private const val PERSISTED_PLAYLIST_REPEAT_COUNT = "repeat-count"
@@ -3965,6 +4237,7 @@ private const val PERSISTED_PLAYLIST_INIT_HIJACK = "direct-alsa-init-hijack"
 private const val PERSISTED_PLAYLIST_LOW_LATENCY = "low-latency"
 private const val PERSISTED_PLAYLIST_ROUTE_ASSIST = "route-assist"
 private const val PERSISTED_PLAYLIST_PCM_DEVICE = "pcm-device"
+private const val PERSISTED_PLAYLIST_RECORD_UNPROCESSED = "record-unprocessed"
 private const val PERSISTED_PLAYLIST_DISABLED_PATHS = "disabled-paths"
 private const val ROOT_ALSA_CACHE_DIRECTORY_NAME = "root-alsa"
 private const val ROOT_ALSA_RUNTIME_DIRECTORY = "/data/local/tmp/audiorepeater_alsa"
