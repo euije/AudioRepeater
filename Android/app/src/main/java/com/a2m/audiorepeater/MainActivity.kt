@@ -2438,6 +2438,7 @@ private class AudioQueuePlayer(
         directAlsaPcmDevice: Int?
     ) {
         val profile = RootAlsaProfile.current(directAlsaPcmDevice)
+        val rootShell = resolveRootShell()
         val forceStereoPayload =
             wavSpec.channelCount == 1 &&
                 (
@@ -2502,7 +2503,7 @@ private class AudioQueuePlayer(
                         "attempt=$attempt/$ROOT_ALSA_SHORT_COMPLETION_MAX_ATTEMPTS"
                 )
                 val process = ProcessBuilder(
-                    "su",
+                    rootShell,
                     "-c",
                     profile.playbackCommand(aggregateWav.absolutePath)
                 )
@@ -2865,7 +2866,7 @@ private class AudioQueuePlayer(
 
     private fun runRootAlsaCleanup(profile: RootAlsaProfile): Pair<Int, String> {
         return runCatching {
-            val process = ProcessBuilder("su", "-c", profile.cleanupCommand())
+            val process = ProcessBuilder(resolveRootShell(), "-c", profile.cleanupCommand())
                 .redirectErrorStream(true)
                 .start()
             val completed = process.waitFor(ROOT_ALSA_CLEANUP_TIMEOUT_SECONDS, TimeUnit.SECONDS)
