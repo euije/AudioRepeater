@@ -1466,6 +1466,13 @@ private data class RootAlsaProfile(
                     echo "A2M_ALSA_PCM_FAILED exit=${'$'}pcm_rc"
                     exit "${'$'}pcm_rc"
                   }
+                  if [ "$usesMmap" = "true" ] &&
+                    printf '%s\n' "${'$'}helper_log" | grep -Fq "A2M_ALSA_PCM_FD_LIVE node=${'$'}expected_node" &&
+                    printf '%s\n' "${'$'}helper_log" | grep -Fq "A2M_ALSA_MMAP_RENDERED core_frames=" &&
+                    printf '%s\n' "${'$'}helper_log" | grep -Fq "A2M_ALSA_MMAP_STOP state=SETUP"; then
+                    echo "A2M_ALSA_PCM_COMPLETE node=${'$'}expected_node"
+                    exit 0
+                  fi
                   echo "A2M_ALSA_PCM_SHORT_COMPLETE requested_node=${'$'}expected_node"
                   exit 26
                 else
