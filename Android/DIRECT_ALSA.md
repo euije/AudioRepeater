@@ -131,6 +131,7 @@ Supported device profiles:
 | Pixel 4 (`flame`) | `/dev/snd/pcmC0D13p` | `TERT_TDM_RX_0 Audio Mixer MultiMedia5` |
 | Pixel 7 (`panther`) | `/dev/snd/pcmC0D1p` | `TDM_0_RX Mixer EP2` |
 | Pixel 10 (`frankel`) | `/dev/snd/pcmC0D1p` | `TDM_0_RX Mixer EP2` |
+| ROG Phone 5s (`ASUS_I005_1`, `ASUS_I005DA`, Android 11) | `/dev/snd/pcmC0D9p` | `SEN_MI2S_RX Audio Mixer MultiMedia5` |
 | Redmi Note 7 (`lavender`) | `/dev/snd/pcmC0D13p` | `PRI_MI2S_RX Audio Mixer MultiMedia5` |
 | Galaxy S10 (`beyond1`) | `/dev/snd/pcmC0D1p` | `ABOX RDMA1_EN` with the silence-only Samsung speaker route helper |
 | ZFlip3 (`b2q`) | `/dev/snd/pcmC0D9p` | `PRI_TDM_RX_0 Audio Mixer MultiMedia5` |
@@ -158,6 +159,22 @@ The helper is the AOSP Android 13 TinyALSA build whose playback loop calls
 `pcm_write()`. The app refuses to run when the model, helper hash, root
 identity, route state, or direct PCM file descriptor does not match the
 verified profile. There is no fallback from Direct ALSA to AudioTrack.
+
+### ROG Phone 5s Android 11
+
+The ROG5s profile uses MultiMedia5/PCM9 with 256-frame periods and four
+periods. Its mixer is `/system/bin/tinymix`; the profile enables only the first
+value of `SEN_MI2S_RX Audio Mixer MultiMedia5` (`1 0`) and disables it after
+playback (`0 0`). The silence-only AudioTrack keeps the Cirrus speaker
+amplifiers and the vendor speaker configuration active through MultiMedia1.
+The input signal is written to PCM9 by the verified `pcm_write` helper.
+
+The current profile is limited to `ASUS_I005DA` on Android 11. The initial
+device check used the ROG5s ENG build `18.0502.2009.21-0-F`, 48 kHz stereo
+PCM16, and public diagnostic tones. This ENG kernel omits per-PCM proc status
+files, so the live direct PCM file descriptor provides the runtime path
+evidence. Acoustic capture and other firmware versions are not established
+by this check.
 
 ### Pixel 10 Android 17 mmap transport
 

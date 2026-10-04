@@ -1583,6 +1583,30 @@ private data class RootAlsaProfile(
                         routeDisableCommand = "/data/local/tmp/pixel4_alsa/tinymix -D 0 1611 0 0"
                     )
                 }
+                "ASUS_I005_1" -> {
+                    require(Build.MODEL == "ASUS_I005DA" && Build.VERSION.SDK_INT == 30) {
+                        "ROG5s direct ALSA requires the verified ASUS_I005DA Android 11 profile"
+                    }
+                    require(requestedPcmDevice == null || requestedPcmDevice == 9) {
+                        "ROG5s direct ALSA only supports PCM9"
+                    }
+                    RootAlsaProfile(
+                        label = "ROG5s ASUS_I005_1 MultiMedia5",
+                        expectedDevice = "ASUS_I005_1",
+                        card = 0,
+                        pcmDevice = 9,
+                        pcmNode = "/dev/snd/pcmC0D9p",
+                        periodSize = 256,
+                        periodCount = 4,
+                        tinymixPath = "/system/bin/tinymix",
+                        routeQueryCommand =
+                            "/system/bin/tinymix -D 0 'SEN_MI2S_RX Audio Mixer MultiMedia5'",
+                        routeEnableCommand =
+                            "/system/bin/tinymix -D 0 'SEN_MI2S_RX Audio Mixer MultiMedia5' 1 0",
+                        routeDisableCommand =
+                            "/system/bin/tinymix -D 0 'SEN_MI2S_RX Audio Mixer MultiMedia5' 0 0"
+                    )
+                }
                 "panther" -> {
                     require(requestedPcmDevice == null || requestedPcmDevice == 1) {
                         "Pixel 7 direct ALSA only supports PCM1"
@@ -1875,7 +1899,7 @@ private data class RootAlsaProfile(
                     "Direct ALSA는 검증된 Pixel 4(flame), Pixel 7(panther), " +
                         "Pixel 10(frankel), " +
                         "Redmi Note 7(lavender), Galaxy S10(beyond1), " +
-                        "ZFlip3(b2q)에서만 지원합니다: " +
+                        "ZFlip3(b2q), ROG5s(ASUS_I005_1)에서만 지원합니다: " +
                         "${Build.MODEL}/${Build.DEVICE}"
                 )
             }
