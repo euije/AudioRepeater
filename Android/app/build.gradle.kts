@@ -53,6 +53,27 @@ android {
     }
 }
 
+val pixel10MmapAssets = layout.buildDirectory.dir("generated/pixel10MmapAssets")
+val pixel10MmapPlayer = pixel10MmapAssets.map { it.file("pixel10_mmap/arm64-v8a/player") }
+android.sourceSets.getByName("main").assets.srcDir(pixel10MmapAssets)
+val buildPixel10MmapHelper by tasks.registering(Exec::class) {
+    val source = file("src/main/cpp/pixel10_mmap/pcm_mmap_player.c")
+    val header = file("src/main/cpp/pixel10_mmap/tinyalsa_abi.h")
+    inputs.files(source, header)
+    outputs.file(pixel10MmapPlayer)
+    doFirst {
+        val ndk = androidComponents.sdkComponents.ndkDirectory.get().asFile
+        val os = System.getProperty("os.name").lowercase()
+        val host = if (os.contains("windows")) "windows-x86_64" else if (os.contains("mac")) "darwin-x86_64" else "linux-x86_64"
+        val compiler = ndk.resolve("toolchains/llvm/prebuilt/$host/bin/clang" + if (os.contains("windows")) ".exe" else "")
+        val output = pixel10MmapPlayer.get().asFile
+        output.parentFile.mkdirs()
+        commandLine(compiler.absolutePath, "--target=aarch64-linux-android28", "-O2", "-fPIE", "-pie",
+            "-Wl,-z,max-page-size=16384", source.absolutePath, "-ldl", "-o", output.absolutePath)
+    }
+}
+tasks.configureEach { if (name == "preBuild") dependsOn(buildPixel10MmapHelper) }
+
 dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)

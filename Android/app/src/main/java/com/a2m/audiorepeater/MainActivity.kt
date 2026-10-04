@@ -1067,7 +1067,11 @@ private fun selectedPlaybackPathStatus(
     useDirectAlsaInitHijack: Boolean = false
 ): String {
     return when {
-        useDirectAlsa -> "선택: Direct ALSA (root / TinyALSA pcm_write)"
+        useDirectAlsa -> if (usesPixel10Mmap(Build.DEVICE, Build.VERSION.SDK_INT)) {
+            "선택: Direct ALSA (root / mmap + NOIRQ)"
+        } else {
+            "선택: Direct ALSA (root / TinyALSA pcm_write)"
+        }
         useDirectAlsaInitHijack -> "선택: Direct ALSA (init-hijack)"
         useAaudioExclusive -> "선택: AAudio EXCLUSIVE"
         else -> "선택: AudioTrack"
@@ -1287,12 +1291,22 @@ private data class RootAlsaProfile(
     val tinymixPath: String,
     val routeQueryCommand: String,
     val routeEnableCommand: String,
-    val routeDisableCommand: String
+    val routeDisableCommand: String,
+    val usesMmap: Boolean = false,
+    val helperPath: String = ROOT_ALSA_TINYPLAY_PATH,
+    val helperSha256: String = ROOT_ALSA_TINYPLAY_SHA256
 ) {
+    val apiLabel: String get() = if (usesMmap) "pcm_mmap_write" else "pcm_write"
+
     fun playbackCommand(wavPath: String): String {
-        val helper = shellQuote(ROOT_ALSA_TINYPLAY_PATH)
+        val helper = shellQuote(helperPath)
         val input = shellQuote(wavPath)
-        val expectedHash = shellQuote(ROOT_ALSA_TINYPLAY_SHA256)
+        val expectedHash = shellQuote(helperSha256)
+        val playbackArguments = if (usesMmap) {
+            "$card $pcmDevice $periodSize $periodCount 7200"
+        } else {
+            "-D $card -d $pcmDevice -p $periodSize -n $periodCount"
+        }
         val expectedDeviceValue = shellQuote(expectedDevice)
         val expectedNodeValue = shellQuote(pcmNode)
         val pcmPidFileValue = shellQuote(pcmPidFile)
@@ -1393,7 +1407,7 @@ private data class RootAlsaProfile(
               *On*) ;;
               *) echo "A2M_ALSA_ROUTE_ENABLE_FAILED"; exit 24 ;;
             esac
-            "${'$'}helper" "${'$'}input" -D $card -d $pcmDevice -p $periodSize -n $periodCount \
+            "${'$'}helper" "${'$'}input" $playbackArguments \
               >"${'$'}helper_output" 2>&1 &
             pcm_pid=${'$'}!
             echo "${'$'}pcm_pid" >"${'$'}pcm_pid_file"
@@ -1484,7 +1498,7 @@ private data class RootAlsaProfile(
     }
 
     fun cleanupCommand(): String {
-        val helper = shellQuote(ROOT_ALSA_TINYPLAY_PATH)
+        val helper = shellQuote(helperPath)
         val expectedNodeValue = shellQuote(pcmNode)
         val pcmPidFileValue = shellQuote(pcmPidFile)
         return """
@@ -1601,7 +1615,8 @@ private data class RootAlsaProfile(
                         routeEnableCommand =
                             "/data/local/tmp/a2m_tinyalsa/tinymix -D 0 set 294 1",
                         routeDisableCommand =
-                            "/data/local/tmp/a2m_tinyalsa/tinymix -D 0 set 294 0"
+                            "/data/local/tmp/a2m_tinyalsa/tinymix -D 0 set 294 0",
+                        usesMmap = usesPixel10Mmap(Build.DEVICE, Build.VERSION.SDK_INT)
                     )
                 }
                 "lavender" -> when (requestedPcmDevice ?: 13) {
@@ -2437,7 +2452,14 @@ private class AudioQueuePlayer(
         forceStereoRouteAssist: Boolean,
         directAlsaPcmDevice: Int?
     ) {
-        val profile = RootAlsaProfile.current(directAlsaPcmDevice)
+        var profile = RootAlsaProfile.current(directAlsaPcmDevice)
+        if (profile.usesMmap) {
+            require(wavSpec.sampleRate == 48000 && wavSpec.channelCount in 1..2) {
+                "Pixel 10 ALSA mmap requires 48 kHz mono or stereo integer PCM"
+            }
+            val helper = Pixel10MmapHelper.prepare(context)
+            profile = profile.copy(helperPath = helper.path, helperSha256 = helper.sha256)
+        }
         val rootShell = resolveRootShell()
         val forceStereoPayload =
             wavSpec.channelCount == 1 &&
@@ -2454,8 +2476,8 @@ private class AudioQueuePlayer(
             sameFileDelayMillis = sameFileDelayMillis,
             forceStereoPayload = forceStereoPayload
         )
-        val routeAssistChannelCount = if (forceStereoRouteAssist) 2 else wavSpec.channelCount
-        val routeAssistChannelMask = if (forceStereoRouteAssist) {
+        val routeAssistChannelCount = if (forceStereoRouteAssist || profile.usesMmap) 2 else wavSpec.channelCount
+        val routeAssistChannelMask = if (forceStereoRouteAssist || profile.usesMmap) {
             AudioFormat.CHANNEL_OUT_STEREO
         } else {
             wavSpec.channelMask
@@ -2491,7 +2513,7 @@ private class AudioQueuePlayer(
             if (stopped) return
 
             postPathStatus(
-                "실제: Direct ALSA pcm_write / ${profile.pcmNode} / ${wavSpec.sampleRate} Hz",
+                "실제: Direct ALSA ${profile.apiLabel} / ${profile.pcmNode} / ${wavSpec.sampleRate} Hz",
                 runId
             )
             var streamVerified = false
@@ -2544,7 +2566,7 @@ private class AudioQueuePlayer(
                     continue
                 }
 
-                directAlsaRuntimeFailure(rootOutput, profile.pcmNode, exitCode)?.let { failure ->
+                directAlsaRuntimeFailure(rootOutput, profile.pcmNode, exitCode, profile.usesMmap)?.let { failure ->
                     error(failure)
                 }
                 streamVerified = true
@@ -2554,7 +2576,7 @@ private class AudioQueuePlayer(
             Log.i(
                 LOG_TAG,
                 "ALSA stream complete file=${item.displayName} node=${profile.pcmNode} " +
-                    "api=pcm_write rootVerified=true"
+                    "api=${profile.apiLabel} rootVerified=true"
             )
         } finally {
             currentRootAlsaProcess?.let { process ->

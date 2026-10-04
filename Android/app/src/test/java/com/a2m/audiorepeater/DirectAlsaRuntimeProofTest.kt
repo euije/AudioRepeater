@@ -93,4 +93,24 @@ class DirectAlsaRuntimeProofTest {
         A2M_ALSA_PCM_COMPLETE node=$pcmNode
         A2M_ALSA_ROUTE_DISABLED Off
     """.trimIndent()
+
+    @Test
+    fun mmapCannotSucceedFromLegacyCompletionMarkers() {
+        val output = successfulOutput("A2M_ALSA_PCM_FD_LIVE node=$pcmNode pid=123")
+        assertEquals("Direct ALSA mmap rendering proof is incomplete",
+            directAlsaRuntimeFailure(output, pcmNode, 0, requiresMmapProgress = true))
+    }
+
+    @Test
+    fun mmapRequiresRenderedSourceAndCleanStop() {
+        val output = successfulOutput("A2M_ALSA_PCM_FD_LIVE node=$pcmNode pid=123") + "\n" + """
+            A2M_ALSA_MMAP_CONFIG api=pcm_mmap_write flags=MMAP|NOIRQ rate=48000
+            A2M_ALSA_MMAP_RENDERED core_frames=273600 written_frames=280800 hw_frames=279360
+            A2M_ALSA_MMAP_STOP state=SETUP
+        """.trimIndent()
+        assertNull(directAlsaRuntimeFailure(output, pcmNode, 0, requiresMmapProgress = true))
+        assertEquals("Direct ALSA mmap rendering proof is incomplete",
+            directAlsaRuntimeFailure(output.replace("A2M_ALSA_MMAP_STOP state=SETUP", ""),
+                pcmNode, 0, requiresMmapProgress = true))
+    }
 }

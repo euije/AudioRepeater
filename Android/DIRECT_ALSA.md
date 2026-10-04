@@ -136,7 +136,8 @@ Supported device profiles:
 | ZFlip3 (`b2q`) | `/dev/snd/pcmC0D9p` | `PRI_TDM_RX_0 Audio Mixer MultiMedia5` |
 | ZFlip3 ablation (`debugDirectAlsaPcmDevice=0`) | `/dev/snd/pcmC0D0p` | `PRI_TDM_RX_0 Audio Mixer MultiMedia1` |
 
-The common helper must be installed at:
+The common `pcm_write` helper must be installed at the following path, except
+for the Pixel 10 Android 17 mmap profile described below:
 
 ```text
 /data/local/tmp/audiorepeater_alsa/tinyplay_pcm_write
@@ -157,6 +158,28 @@ The helper is the AOSP Android 13 TinyALSA build whose playback loop calls
 `pcm_write()`. The app refuses to run when the model, helper hash, root
 identity, route state, or direct PCM file descriptor does not match the
 verified profile. There is no fallback from Direct ALSA to AudioTrack.
+
+### Pixel 10 Android 17 mmap transport
+
+On `frankel` with Android SDK 37, the existing Direct ALSA checkbox selects
+`pcm_mmap_write` with `PCM_MMAP | PCM_NOIRQ` on PCM1. The APK includes an ARM64
+executable built from `app/src/main/cpp/pixel10_mmap`; it loads the device's
+`/system/lib64/libtinyalsa.so`. The app extracts it into its private files
+directory and checks its SHA-256 against the packaged asset before root execution.
+
+This profile accepts 48 kHz integer PCM16/24/32 mono or stereo WAVs. The helper
+widens samples to S32_LE exactly and duplicates mono into identical left/right
+channels. Stereo channels retain their individual samples. It does not change
+the input WAV, sample rate, amplitude, repeats, or delays. The AudioTrack backend
+assist carries only stereo silence.
+
+The helper checks that the hardware pointer has passed every source frame,
+including source padding and repeat delays, then stops during the added 150 ms
+quiet proof tail. Successful mmap logs must include `A2M_ALSA_MMAP_CONFIG`,
+`A2M_ALSA_MMAP_RENDERED`, and `A2M_ALSA_MMAP_STOP state=SETUP`; a legacy completion
+message alone cannot pass validation. The completion API is reported as
+`api=pcm_mmap_write rootVerified=true`. Other device/SDK profiles use their
+existing `pcm_write` path.
 
 Successful logs include:
 

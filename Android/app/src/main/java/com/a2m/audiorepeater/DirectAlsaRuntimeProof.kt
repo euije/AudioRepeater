@@ -6,7 +6,8 @@ internal fun isDirectAlsaShortCompletion(rootOutput: String, pcmNode: String): B
 internal fun directAlsaRuntimeFailure(
     rootOutput: String,
     pcmNode: String,
-    exitCode: Int
+    exitCode: Int,
+    requiresMmapProgress: Boolean = false
 ): String? {
     if (
         rootOutput.contains("Error playing sample", ignoreCase = true) ||
@@ -20,6 +21,13 @@ internal fun directAlsaRuntimeFailure(
     }
     if (exitCode != 0) {
         return "Direct ALSA root process failed: exit=$exitCode"
+    }
+    if (requiresMmapProgress && (
+            !rootOutput.contains("A2M_ALSA_MMAP_CONFIG api=pcm_mmap_write flags=MMAP|NOIRQ") ||
+            !rootOutput.contains("A2M_ALSA_MMAP_RENDERED core_frames=") ||
+            !rootOutput.contains("A2M_ALSA_MMAP_STOP state=SETUP")
+        )) {
+        return "Direct ALSA mmap rendering proof is incomplete"
     }
 
     val pcmBecameActive =
