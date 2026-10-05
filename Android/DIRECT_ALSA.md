@@ -176,6 +176,15 @@ files, so the live direct PCM file descriptor provides the runtime path
 evidence. Acoustic capture and other firmware versions are not established
 by this check.
 
+The player serializes playback runs. Before it starts a new run, it waits for
+the previous playback job and its stop-cleanup thread. This sequence closes
+the AAudio stream, terminates the PCM helper, and completes route cleanup.
+The ROG5s profile can retry a failed PCM open up to four times, 500 ms apart.
+It retries only if the helper reports a failure to open the exact PCM node
+and has produced no live-PCM or completion proof. If the helper fails during
+playback, the player reports an error. The player preserves input sample bytes,
+bit depth, channel count, repeat count, and configured gaps.
+
 ### Pixel 10 Android 17 mmap transport
 
 On `frankel` with Android SDK 37, the existing Direct ALSA checkbox selects

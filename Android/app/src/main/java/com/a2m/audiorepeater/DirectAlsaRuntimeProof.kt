@@ -1,5 +1,13 @@
 package com.a2m.audiorepeater
 
+internal fun isDirectAlsaPcmOpenFailure(rootOutput: String, pcmNode: String): Boolean =
+    rootOutput.contains("A2M_ALSA_PCM_FAILED") &&
+        rootOutput.contains("Unable to open PCM device") &&
+        rootOutput.contains("pcm_hw_open: cannot open device '$pcmNode'") &&
+        !rootOutput.contains("A2M_ALSA_PCM_FD_LIVE node=$pcmNode") &&
+        !rootOutput.contains("A2M_ALSA_PCM_LIVE node=$pcmNode") &&
+        !rootOutput.contains("A2M_ALSA_PCM_COMPLETE node=$pcmNode")
+
 internal fun isDirectAlsaShortCompletion(rootOutput: String, pcmNode: String): Boolean =
     rootOutput.contains("A2M_ALSA_PCM_SHORT_COMPLETE requested_node=$pcmNode")
 

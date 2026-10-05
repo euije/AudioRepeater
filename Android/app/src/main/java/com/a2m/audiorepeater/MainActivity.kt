@@ -103,7 +103,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
@@ -1294,7 +1297,8 @@ private data class RootAlsaProfile(
     val routeDisableCommand: String,
     val usesMmap: Boolean = false,
     val helperPath: String = ROOT_ALSA_TINYPLAY_PATH,
-    val helperSha256: String = ROOT_ALSA_TINYPLAY_SHA256
+    val helperSha256: String = ROOT_ALSA_TINYPLAY_SHA256,
+    val pcmOpenRetryCount: Int = 0
 ) {
     val apiLabel: String get() = if (usesMmap) "pcm_mmap_write" else "pcm_write"
 
@@ -1604,7 +1608,8 @@ private data class RootAlsaProfile(
                         routeEnableCommand =
                             "/system/bin/tinymix -D 0 'SEN_MI2S_RX Audio Mixer MultiMedia5' 1 0",
                         routeDisableCommand =
-                            "/system/bin/tinymix -D 0 'SEN_MI2S_RX Audio Mixer MultiMedia5' 0 0"
+                            "/system/bin/tinymix -D 0 'SEN_MI2S_RX Audio Mixer MultiMedia5' 0 0",
+                        pcmOpenRetryCount = 4
                     )
                 }
                 "panther" -> {
@@ -1920,6 +1925,7 @@ private class AudioQueuePlayer(
 ) {
     private val handler = Handler(Looper.getMainLooper())
     private val playbackScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val playbackMutex = Mutex()
     private var playbackJob: Job? = null
 
     @Volatile
@@ -1945,6 +1951,9 @@ private class AudioQueuePlayer(
 
     @Volatile
     private var currentRootAlsaProfile: RootAlsaProfile? = null
+
+    @Volatile
+    private var currentRootAlsaCleanupThread: Thread? = null
 
     @Volatile
     private var currentMicRecorder: UnprocessedMicRecorder? = null
@@ -1984,26 +1993,35 @@ private class AudioQueuePlayer(
         directAlsaPcmDevice: Int?,
         recordUnprocessed: Boolean
     ) {
+        val previousJob = playbackJob
         stop()
         if (items.isEmpty()) return
 
+        val previousCleanupThread = currentRootAlsaCleanupThread
+
         val runId = playbackRunId + 1
         playbackRunId = runId
-        stopped = false
         playbackJob = playbackScope.launch {
-            playQueue(
-                runId = runId,
-                items = items,
-                sameFileDelayMillis = sameFileDelayMillis,
-                differentFileDelayMillis = differentFileDelayMillis,
-                useAaudioExclusive = useAaudioExclusive,
-                useDirectAlsa = useDirectAlsa,
-                useDirectAlsaInitHijack = useDirectAlsaInitHijack,
-                useLowLatencyAudioTrack = useLowLatencyAudioTrack,
-                forceStereoRouteAssist = forceStereoRouteAssist,
-                directAlsaPcmDevice = directAlsaPcmDevice,
-                recordUnprocessed = recordUnprocessed
-            )
+            playbackMutex.withLock {
+                // Release previous streams and route cleanup before starting the next run.
+                previousJob?.join()
+                previousCleanupThread?.join()
+                if (!isActive || runId != playbackRunId) return@launch
+                stopped = false
+                playQueue(
+                    runId = runId,
+                    items = items,
+                    sameFileDelayMillis = sameFileDelayMillis,
+                    differentFileDelayMillis = differentFileDelayMillis,
+                    useAaudioExclusive = useAaudioExclusive,
+                    useDirectAlsa = useDirectAlsa,
+                    useDirectAlsaInitHijack = useDirectAlsaInitHijack,
+                    useLowLatencyAudioTrack = useLowLatencyAudioTrack,
+                    forceStereoRouteAssist = forceStereoRouteAssist,
+                    directAlsaPcmDevice = directAlsaPcmDevice,
+                    recordUnprocessed = recordUnprocessed
+                )
+            }
         }
     }
 
@@ -2548,12 +2566,16 @@ private class AudioQueuePlayer(
                 runId
             )
             var streamVerified = false
-            for (attempt in 1..ROOT_ALSA_SHORT_COMPLETION_MAX_ATTEMPTS) {
+            val maxAttempts = maxOf(
+                ROOT_ALSA_SHORT_COMPLETION_MAX_ATTEMPTS,
+                profile.pcmOpenRetryCount + 1
+            )
+            for (attempt in 1..maxAttempts) {
                 Log.i(
                     LOG_TAG,
                     "ALSA stream start profile=${profile.label} file=${item.displayName} " +
                         "repeats=${item.repeatCount} aggregate=${aggregateWav.absolutePath} " +
-                        "attempt=$attempt/$ROOT_ALSA_SHORT_COMPLETION_MAX_ATTEMPTS"
+                        "attempt=$attempt/$maxAttempts"
                 )
                 val process = ProcessBuilder(
                     rootShell,
@@ -2580,20 +2602,30 @@ private class AudioQueuePlayer(
                 val exitCode = process.exitValue()
                 val shortCompletion =
                     isDirectAlsaShortCompletion(rootOutput, profile.pcmNode)
+                val pcmOpenRetry =
+                    attempt <= profile.pcmOpenRetryCount &&
+                        isDirectAlsaPcmOpenFailure(rootOutput, profile.pcmNode)
                 if (
-                    shortCompletion &&
-                    attempt < ROOT_ALSA_SHORT_COMPLETION_MAX_ATTEMPTS &&
+                    (pcmOpenRetry || shortCompletion &&
+                        attempt < ROOT_ALSA_SHORT_COMPLETION_MAX_ATTEMPTS) &&
                     !stopped
                 ) {
                     val cleanupResult = runRootAlsaCleanup(profile)
                     Log.w(
                         LOG_TAG,
-                        "ALSA helper exited before PCM became active; retrying " +
+                        "ALSA PCM acquisition retry openFailure=$pcmOpenRetry " +
                             "file=${item.displayName} node=${profile.pcmNode} " +
                             "cleanupExit=${cleanupResult.first}"
                     )
-                    postPathStatus("재시도: ALSA PCM 조기 종료 감지", runId)
-                    Thread.sleep(ROOT_ALSA_SHORT_COMPLETION_RETRY_DELAY_MILLIS)
+                    postPathStatus(
+                        if (pcmOpenRetry) "재시도: ALSA 장치가 열릴 때까지 대기"
+                        else "재시도: ALSA PCM 조기 종료 감지",
+                        runId
+                    )
+                    Thread.sleep(
+                        if (pcmOpenRetry) ROOT_ALSA_PCM_OPEN_RETRY_DELAY_MILLIS
+                        else ROOT_ALSA_SHORT_COMPLETION_RETRY_DELAY_MILLIS
+                    )
                     continue
                 }
 
@@ -2604,6 +2636,10 @@ private class AudioQueuePlayer(
                 break
             }
             check(streamVerified) { "Direct ALSA stream was not verified" }
+            postPathStatus(
+                "실제: Direct ALSA ${profile.apiLabel} / ${profile.pcmNode} / ${wavSpec.sampleRate} Hz",
+                runId
+            )
             Log.i(
                 LOG_TAG,
                 "ALSA stream complete file=${item.displayName} node=${profile.pcmNode} " +
@@ -3672,7 +3708,7 @@ private class AudioQueuePlayer(
         }
         currentRootAlsaProfile?.let { profile ->
             currentRootAlsaProfile = null
-            Thread(
+            val cleanupThread = Thread(
                 {
                     val result = runRootAlsaCleanup(profile)
                     Log.i(
@@ -3681,7 +3717,9 @@ private class AudioQueuePlayer(
                     )
                 },
                 "AudioRepeater-ALSA-cleanup"
-            ).start()
+            )
+            currentRootAlsaCleanupThread = cleanupThread
+            cleanupThread.start()
         }
         currentAaudioStream?.let { stream ->
             runCatching { stream.requestStop() }
@@ -4303,6 +4341,7 @@ private const val ROOT_ALSA_ROUTE_STARTUP_MILLIS = 750L
 private const val ROOT_ALSA_PROOF_TAIL_MILLIS = 150L
 private const val ROOT_ALSA_SHORT_COMPLETION_MAX_ATTEMPTS = 2
 private const val ROOT_ALSA_SHORT_COMPLETION_RETRY_DELAY_MILLIS = 150L
+private const val ROOT_ALSA_PCM_OPEN_RETRY_DELAY_MILLIS = 500L
 private const val ROOT_ALSA_ROUTE_THREAD_JOIN_MILLIS = 1_000L
 private const val ROOT_ALSA_PROCESS_TIMEOUT_SECONDS = 300L
 private const val ROOT_ALSA_CLEANUP_TIMEOUT_SECONDS = 5L
