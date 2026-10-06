@@ -1588,8 +1588,12 @@ private data class RootAlsaProfile(
                     )
                 }
                 "ASUS_I005_1" -> {
-                    require(Build.MODEL == "ASUS_I005DA" && Build.VERSION.SDK_INT == 30) {
-                        "ROG5s direct ALSA requires the verified ASUS_I005DA Android 11 profile"
+                    val verifiedFirmware = Build.VERSION.SDK_INT == 30 ||
+                        (Build.VERSION.SDK_INT == 33 &&
+                            Build.VERSION.INCREMENTAL == "33.0210.0210.200-0" &&
+                            Build.TYPE == "user" && Build.TAGS == "release-keys")
+                    require(Build.MODEL == "ASUS_I005DA" && verifiedFirmware) {
+                        "ROG5s direct ALSA requires ASUS_I005DA Android 11 or Android 13 33.0210.0210.200-0"
                     }
                     require(requestedPcmDevice == null || requestedPcmDevice == 9) {
                         "ROG5s direct ALSA only supports PCM9"

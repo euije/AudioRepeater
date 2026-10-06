@@ -131,7 +131,7 @@ Supported device profiles:
 | Pixel 4 (`flame`) | `/dev/snd/pcmC0D13p` | `TERT_TDM_RX_0 Audio Mixer MultiMedia5` |
 | Pixel 7 (`panther`) | `/dev/snd/pcmC0D1p` | `TDM_0_RX Mixer EP2` |
 | Pixel 10 (`frankel`) | `/dev/snd/pcmC0D1p` | `TDM_0_RX Mixer EP2` |
-| ROG Phone 5s (`ASUS_I005_1`, `ASUS_I005DA`, Android 11) | `/dev/snd/pcmC0D9p` | `SEN_MI2S_RX Audio Mixer MultiMedia5` |
+| ROG Phone 5s (`ASUS_I005_1`, `ASUS_I005DA`, Android 11 or verified Android 13 .200) | `/dev/snd/pcmC0D9p` | `SEN_MI2S_RX Audio Mixer MultiMedia5` |
 | Redmi Note 7 (`lavender`) | `/dev/snd/pcmC0D13p` | `PRI_MI2S_RX Audio Mixer MultiMedia5` |
 | Galaxy S10 (`beyond1`) | `/dev/snd/pcmC0D1p` | `ABOX RDMA1_EN` with the silence-only Samsung speaker route helper |
 | ZFlip3 (`b2q`) | `/dev/snd/pcmC0D9p` | `PRI_TDM_RX_0 Audio Mixer MultiMedia5` |
@@ -160,7 +160,7 @@ The helper is the AOSP Android 13 TinyALSA build whose playback loop calls
 identity, route state, or direct PCM file descriptor does not match the
 verified profile. There is no fallback from Direct ALSA to AudioTrack.
 
-### ROG Phone 5s Android 11
+### ROG Phone 5s Android 11 and verified Android 13
 
 The ROG5s profile uses MultiMedia5/PCM9 with 256-frame periods and four
 periods. Its mixer is `/system/bin/tinymix`; the profile enables only the first
@@ -169,12 +169,27 @@ playback (`0 0`). The silence-only AudioTrack keeps the Cirrus speaker
 amplifiers and the vendor speaker configuration active through MultiMedia1.
 The input signal is written to PCM9 by the verified `pcm_write` helper.
 
-The current profile is limited to `ASUS_I005DA` on Android 11. The initial
+The profile requires `ASUS_I005DA` with Android SDK 30, or SDK 33 on the exact
+official build `33.0210.0210.200-0` with `user/release-keys`. The initial
 device check used the ROG5s ENG build `18.0502.2009.21-0-F`, 48 kHz stereo
 PCM16, and public diagnostic tones. This ENG kernel omits per-PCM proc status
 files, so the live direct PCM file descriptor provides the runtime path
-evidence. Acoustic capture and other firmware versions are not established
-by this check.
+evidence. Acoustic capture is not established by the Android 11 check.
+
+On 2026-10-06, the official Android 13 build was checked on the same hardware
+after bootloader unlocking and Magisk 30.7 installation. PCM9 still reports
+MultiMedia5, and the named speaker mixer still has two boolean values. The
+profile retains the same PCM node, 256x4 periods, mixer path, route commands,
+helper hash, and silence-only backend assist. Other Android 13 builds remain
+outside this reviewed profile.
+
+The updated APK passed a physical playback check with a public 1 kHz tone:
+48 kHz stereo PCM16, two seconds, peak 0.05, one repeat, and the existing
+150 ms silent proof tail. Logs confirmed root, a live PCM9 file descriptor,
+`api=pcm_write rootVerified=true`, normal queue completion, and route recovery
+to `Off Off`. The user confirmed hearing the tone. No microphone recording or
+campaign registration was performed. Installed APK SHA-256:
+`c14124df09789fef5688a9b7668c5967565b0362d1192baee33dc3968a86b472`.
 
 The player serializes playback runs. Before it starts a new run, it waits for
 the previous playback job and its stop-cleanup thread. This sequence closes
