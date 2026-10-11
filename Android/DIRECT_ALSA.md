@@ -2,15 +2,43 @@
 
 AudioRepeater has two Direct ALSA options:
 
-1. `Direct ALSA (root / TinyALSA pcm_write)` — requires an existing root shell
-   (`su`). See "root / TinyALSA" section below.
-2. `Direct ALSA (init-hijack)` — Pixel 4 only; obtains root itself via
-   CVE-2023-33107 (init code-page hijack) and drives the TinyALSA helper through
-   the resulting root reverse shell. See "init-hijack" section below.
+1. `ALSA(root)` requires an existing root shell (`su`). The app enables this
+   option only after `su -c 'id -u'` confirms root access. The check runs off the
+   UI thread and times out after five seconds. Use `다시 확인` to retry after
+   granting access. See the root / TinyALSA section below.
+2. `ALSA(init)` appears only on the device, build, and kernel verified in
+   [unlock_pixel4](https://github.com/euije/unlock_pixel4): `flame`, SDK 33,
+   fingerprint `google/flame/flame:13/TP1A.221005.002.B2/9382335:user/release-keys`,
+   kernel `4.14.276-g6ef255005cea`. Playback checks the same conditions.
 
-- Unchecked (both): the existing AudioTrack path is used, unless the separate AAudio
-  EXCLUSIVE option is selected.
-- The two Direct ALSA options and AAudio EXCLUSIVE are mutually exclusive in the UI.
+The `재생` section uses radio buttons in this order: `ALSA(root)`, `ALSA(init)`
+(when supported), `AAudio`, `AudioTrack`. Exactly one option is selected.
+AudioTrack is the default. An unavailable restored selection returns to
+AudioTrack; an explicit unsupported ADB autoplay request reports an error
+without playing through a different path.
+
+## Playback settings
+
+The screen groups controls under `재생`, `재생 효과`, `재생 위치`, and `녹음`.
+The repeat count, multiple-file import, apply button, and both delay fields
+share a horizontally scrollable row.
+
+AudioTrack supports these processing controls, including its MediaPlayer
+fallback:
+
+- Equalizer: device presets and band gains.
+- Dynamics Processing: input gain, three compressor bands, and limiter gains.
+  Parameters apply to every channel. Equalizer and Dynamics Processing are
+  selected one at a time; both can be off. Settings apply at the next playback.
+- Location: default (`MODE_NORMAL`), receiver or speaker
+  (`MODE_IN_COMMUNICATION`). Communication locations use voice communication
+  usage and speech content. Default mode offers Usage and ContentType selection.
+
+Each payload audio session gets its own effect instance. Playback releases the
+effect before releasing the session and restores routing after completion,
+stop, or failure. It reports unsupported effects and output mismatches.
+AAudio and Direct ALSA disable these controls and retain their existing
+configuration. Processing never attaches to the silent ALSA route helper.
 
 ## Simultaneous UNPROCESSED microphone recording
 
@@ -87,9 +115,7 @@ tinymix route are the same verified files used by the root/TinyALSA path.
 
 ## root / TinyALSA (requires `su`)
 
-- Unchecked: the existing AudioTrack path is used, unless the separate AAudio
-  EXCLUSIVE option is selected.
-- Checked: for integer PCM 16/24/32-bit WAV input, AudioRepeater prepares one
+- Selected: for integer PCM 16/24/32-bit WAV input, AudioRepeater prepares one
   WAV containing the requested repeats and delays while preserving the source
   sample rate, channel count, bit depth, and sample bytes. It starts a
   silence-only AudioTrack route helper and runs the verified TinyALSA helper
@@ -202,7 +228,7 @@ bit depth, channel count, repeat count, and configured gaps.
 
 ### Pixel 10 Android 17 mmap transport
 
-On `frankel` with Android SDK 37, the existing Direct ALSA checkbox selects
+On `frankel` with Android SDK 37, the `ALSA(root)` option selects
 `pcm_mmap_write` with `PCM_MMAP | PCM_NOIRQ` on PCM1. The APK includes an ARM64
 executable built from `app/src/main/cpp/pixel10_mmap`; it loads the device's
 `/system/lib64/libtinyalsa.so`. The app extracts it into its private files
