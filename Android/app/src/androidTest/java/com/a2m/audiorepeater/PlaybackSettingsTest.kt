@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.activity.compose.LocalActivityResultRegistryOwner
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -86,7 +87,8 @@ class PlaybackSettingsTest {
         val delayY = compose.onNodeWithText("File delay (s)").fetchSemanticsNode().boundsInRoot.center.y
         assertEquals(repeatY, delayY, 2f)
         compose.onNodeWithText("Default repeats").performScrollTo()
-        val screenshot = instrumentation.uiAutomation.takeScreenshot()
+        // Capture only the app content, without system toasts or status-bar identifiers.
+        val screenshot = compose.onRoot().captureToImage().asAndroidBitmap()
         File(instrumentation.targetContext.getExternalFilesDir(null), "playback-settings-test.png").outputStream().use {
             screenshot.compress(Bitmap.CompressFormat.PNG, 100, it)
         }

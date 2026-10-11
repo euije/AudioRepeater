@@ -6,6 +6,8 @@ App labels, status messages, and errors use English.
 
 ## Android
 
+<img src="docs/images/android-playback.png" alt="AudioRepeater on Android with playback paths, effects, output modes, and recording controls" width="360">
+
 Open `Android` in Android Studio. The app requires Android 9 (API 28) or later.
 Use JDK 17 and the Android SDK/NDK versions requested by Gradle. A local
 `Android/local.properties` can specify your SDK path; this file is ignored.
