@@ -20,7 +20,7 @@ internal const val PIXEL4_INIT_FINGERPRINT =
 
 internal fun supportsInitAlsa(device: String, sdk: Int, fingerprint: String, kernel: String): Boolean =
     device == "flame" && sdk == 33 && fingerprint == PIXEL4_INIT_FINGERPRINT &&
-        kernel == "4.14.276-g6ef255005cea"
+        kernel in setOf("4.14.276-g6ef255005cea", "4.14.276-g6ef255005cea-ab9062920")
 
 internal fun availableBackend(
     requested: PlaybackBackend,
@@ -33,13 +33,13 @@ internal fun availableBackend(
 }
 
 internal enum class PlaybackEffect(val label: String) {
-    NONE("끔"), EQUALIZER("Equalizer"), DYNAMICS("Dynamics Processing")
+    NONE("Off"), EQUALIZER("Equalizer"), DYNAMICS("Dynamics Processing")
 }
 
 internal enum class PlaybackLocation(val label: String) {
-    DEFAULT("기본 · MODE_NORMAL"),
-    RECEIVER("수화부 · MODE_IN_COMMUNICATION"),
-    SPEAKER("스피커 · MODE_IN_COMMUNICATION")
+    DEFAULT("Default · MODE_NORMAL"),
+    RECEIVER("Receiver · MODE_IN_COMMUNICATION"),
+    SPEAKER("Speaker · MODE_IN_COMMUNICATION")
 }
 
 internal data class DynamicsBandSettings(
@@ -90,7 +90,7 @@ internal data class PlaybackProcessing(
     fun validateFor(backend: PlaybackBackend) {
         effects.validate()
         require(backend == PlaybackBackend.AUDIO_TRACK || this == PlaybackProcessing()) {
-            "재생 효과와 재생 위치는 AudioTrack에서만 지원합니다."
+            "Playback effects and output selection require AudioTrack."
         }
     }
 }

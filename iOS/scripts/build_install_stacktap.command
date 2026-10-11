@@ -2,8 +2,9 @@
 
 set -euo pipefail
 
-ROOT="$HOME/AudioRepeaterIOSWork/iOS"
-UDID="YOUR_DEVICE_UDID"
+ROOT="${AUDIOREPEATER_IOS_ROOT:-${0:A:h:h}}"
+UDID="${AUDIOREPEATER_DEVICE_ID:?Set AUDIOREPEATER_DEVICE_ID to the target iPhone UDID}"
+TEAM="${AUDIOREPEATER_TEAM_ID:?Set AUDIOREPEATER_TEAM_ID to your Apple development team}"
 RUN_ID="stacktap-$(date +%Y%m%d-%H%M%S)"
 DERIVED="$ROOT/build/DeviceDerivedData-Xcode27-i12m-$RUN_ID"
 STATUS="$ROOT/build/stacktap-gui-latest.status"
@@ -22,12 +23,15 @@ function finish {
 trap finish EXIT
 
 cd "$ROOT"
-export DEVELOPER_DIR="/Applications/Xcode-beta.app/Contents/Developer"
+if [[ -n "${AUDIOREPEATER_DEVELOPER_DIR:-}" ]]; then
+    export DEVELOPER_DIR="$AUDIOREPEATER_DEVELOPER_DIR"
+fi
 
 xcodebuild \
   -project AudioRepeaterIOS.xcodeproj \
   -scheme AudioRepeaterIOS \
   -configuration Debug \
+  DEVELOPMENT_TEAM="$TEAM" \
   -destination "id=$UDID" \
   -derivedDataPath "$DERIVED" \
   -allowProvisioningUpdates \

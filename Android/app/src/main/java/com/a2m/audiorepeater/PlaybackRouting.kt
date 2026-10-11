@@ -22,13 +22,13 @@ internal fun PlaybackProcessing.audioAttributes(): AudioAttributes = AudioAttrib
         AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE -> AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE
         AudioAttributes.USAGE_GAME -> AudioAttributes.USAGE_GAME
         AudioAttributes.USAGE_ASSISTANT -> AudioAttributes.USAGE_ASSISTANT
-        else -> error("지원하지 않는 Usage입니다: $usage")
+        else -> error("Unsupported Usage: $usage")
     })
     .setContentType(if (location != PlaybackLocation.DEFAULT) AudioAttributes.CONTENT_TYPE_SPEECH else when (contentType) {
         AudioAttributes.CONTENT_TYPE_MUSIC -> AudioAttributes.CONTENT_TYPE_MUSIC
         AudioAttributes.CONTENT_TYPE_SPEECH -> AudioAttributes.CONTENT_TYPE_SPEECH
         AudioAttributes.CONTENT_TYPE_SONIFICATION -> AudioAttributes.CONTENT_TYPE_SONIFICATION
-        else -> error("지원하지 않는 ContentType입니다: $contentType")
+        else -> error("Unsupported ContentType: $contentType")
     })
     .build()
 
@@ -55,12 +55,12 @@ internal class PlaybackRouting(context: Context, private val location: PlaybackL
             if (expectedType != null) {
                 if (Build.VERSION.SDK_INT >= 31) {
                     val device = manager.availableCommunicationDevices.firstOrNull { it.type == expectedType }
-                        ?: error("선택한 재생 위치를 사용할 수 없습니다: ${location.label}")
-                    check(manager.setCommunicationDevice(device)) { "재생 위치 설정을 거부했습니다: ${location.label}" }
+                        ?: error("The selected output is unavailable: ${location.label}")
+                    check(manager.setCommunicationDevice(device)) { "The output selection was rejected: ${location.label}" }
                     changedDevice = true
                 } else {
                     check(manager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).any { it.type == expectedType }) {
-                        "선택한 출력 장치가 없습니다: ${location.label}"
+                        "The selected output device is unavailable: ${location.label}"
                     }
                     manager.isSpeakerphoneOn = location == PlaybackLocation.SPEAKER
                     changedDevice = true
@@ -81,14 +81,14 @@ internal class PlaybackRouting(context: Context, private val location: PlaybackL
             Thread.sleep(25)
             device = actualDevice()
         }
-        if (stopped()) return "중단"
+        if (stopped()) return "Stopped"
         check(expectedType == null || device?.type == expectedType) {
-            "요청한 재생 위치와 실제 출력이 다릅니다: 요청=${location.label}, 실제=${device?.type ?: "확인 불가"}"
+            "Output mismatch: requested=${location.label}, actual=${device?.type ?: "unknown"}"
         }
         val label = when (device?.type) {
-            AudioDeviceInfo.TYPE_BUILTIN_EARPIECE -> "수화부"
-            AudioDeviceInfo.TYPE_BUILTIN_SPEAKER -> "스피커"
-            null -> "출력 확인 불가"
+            AudioDeviceInfo.TYPE_BUILTIN_EARPIECE -> "Receiver"
+            AudioDeviceInfo.TYPE_BUILTIN_SPEAKER -> "Speaker"
+            null -> "Output unknown"
             else -> device.productName.toString()
         }
         Log.i("AudioRepeater", "routing actual=$label type=${device?.type} mode=${manager.mode}")

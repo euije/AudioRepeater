@@ -1,4 +1,5 @@
 *.iml
+**/.idea/
 .gradle
 Android/.kotlin/
 /local.properties
@@ -23,3 +24,24 @@ iOS/DerivedData
 iOS/*.xcworkspace/xcuserdata
 iOS/*.xcodeproj/xcuserdata
 iOS/*.xcodeproj/project.xcworkspace/xcuserdata
+
+# Local credentials, signing material, and generated media.
+.env
+.env.*
+!.env.example
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.pem
+*.key
+*.mobileprovision
+*.apk
+*.ipa
+__pycache__/
+*.pyc
+iOS/scripts/runs/
+iOS/scripts/ssh-control-*
+iOS/scripts/*.log
+iOS/scripts/com.a2m.audiorepeater.ioaudio2bridge.plist
+iOS/scripts/com.a2m.keep-awake.plist

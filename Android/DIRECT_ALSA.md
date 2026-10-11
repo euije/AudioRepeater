@@ -4,14 +4,15 @@ AudioRepeater has two Direct ALSA options:
 
 1. `ALSA(root)` requires an existing root shell (`su`). The app enables this
    option only after `su -c 'id -u'` confirms root access. The check runs off the
-   UI thread and times out after five seconds. Use `다시 확인` to retry after
+   UI thread and times out after five seconds. Use `Check again` to retry after
    granting access. See the root / TinyALSA section below.
 2. `ALSA(init)` appears only on the device, build, and kernel verified in
    [unlock_pixel4](https://github.com/euije/unlock_pixel4): `flame`, SDK 33,
    fingerprint `google/flame/flame:13/TP1A.221005.002.B2/9382335:user/release-keys`,
-   kernel `4.14.276-g6ef255005cea`. Playback checks the same conditions.
+   kernel `4.14.276-g6ef255005cea` or its official
+   `4.14.276-g6ef255005cea-ab9062920` form. Playback checks the same conditions.
 
-The `재생` section uses radio buttons in this order: `ALSA(root)`, `ALSA(init)`
+The `Playback` section uses radio buttons in this order: `ALSA(root)`, `ALSA(init)`
 (when supported), `AAudio`, `AudioTrack`. Exactly one option is selected.
 AudioTrack is the default. An unavailable restored selection returns to
 AudioTrack; an explicit unsupported ADB autoplay request reports an error
@@ -19,7 +20,7 @@ without playing through a different path.
 
 ## Playback settings
 
-The screen groups controls under `재생`, `재생 효과`, `재생 위치`, and `녹음`.
+The screen groups controls under `Playback`, `Playback effects`, `Playback output`, and `Recording`.
 The repeat count, multiple-file import, apply button, and both delay fields
 share a horizontally scrollable row.
 
@@ -42,7 +43,7 @@ configuration. Processing never attaches to the silent ALSA route helper.
 
 ## Simultaneous UNPROCESSED microphone recording
 
-Enable `마이크 동시 녹음 (UNPROCESSED)` before starting the queue to record the
+Enable `Record microphone (UNPROCESSED)` before starting the queue to record the
 device microphone while any playback path, including Direct ALSA, is active.
 The app requests `MediaRecorder.AudioSource.UNPROCESSED` without falling back to
 a processed input source and records a single 48 kHz mono PCM16 WAV for the
@@ -126,6 +127,11 @@ tinymix route are the same verified files used by the root/TinyALSA path.
 - Direct ALSA and AAudio EXCLUSIVE are mutually exclusive in the UI.
 
 ADB control:
+
+These intent extras are accepted only by debug builds. Release builds ignore
+them and do not discover files from the debug audio directory. In debug builds,
+discovered files populate the queue without autoplay; explicit ADB requests can
+still start playback.
 
 ```text
 --ez debugUseDirectAlsa true

@@ -73,10 +73,10 @@ internal class AttachedPlaybackEffect private constructor(val effect: AudioEffec
                         val eq = Equalizer(0, sessionId)
                         effect = eq
                         if (settings.eqPreset >= 0) {
-                            require(settings.eqPreset < eq.numberOfPresets) { "이 기기에서 지원하지 않는 EQ 프리셋입니다." }
+                            require(settings.eqPreset < eq.numberOfPresets) { "This device does not support the selected EQ preset." }
                             eq.usePreset(settings.eqPreset.toShort())
                         } else if (settings.eqLevelsMb.isNotEmpty()) {
-                            require(settings.eqLevelsMb.size == eq.numberOfBands.toInt()) { "EQ 밴드 구성이 바뀌었습니다. EQ 설정을 다시 여세요." }
+                            require(settings.eqLevelsMb.size == eq.numberOfBands.toInt()) { "The EQ band configuration changed. Open EQ settings again." }
                             settings.eqLevelsMb.forEachIndexed { index, level ->
                                 eq.setBandLevel(index.toShort(), level.coerceIn(eq.bandLevelRange[0].toInt(),
                                     eq.bandLevelRange[1].toInt()).toShort())
@@ -117,14 +117,14 @@ internal class AttachedPlaybackEffect private constructor(val effect: AudioEffec
                     }
                 }
                 effect?.let {
-                    check(it.hasControl()) { "오디오 효과 제어 권한을 얻지 못했습니다." }
-                    check(it.setEnabled(true) == AudioEffect.SUCCESS && it.enabled) { "오디오 효과를 켜지 못했습니다." }
+                    check(it.hasControl()) { "Could not obtain control of the audio effect." }
+                    check(it.setEnabled(true) == AudioEffect.SUCCESS && it.enabled) { "Could not enable the audio effect." }
                 }
                 Log.i("AudioRepeater", "effect=${settings.selection} session=$sessionId channels=$channels sampleRate=$sampleRate settings=$settings")
                 return AttachedPlaybackEffect(effect)
             } catch (error: Exception) {
                 effect?.release()
-                throw IllegalStateException("${settings.selection.label} 적용 실패: ${error.message}", error)
+                throw IllegalStateException("Failed to apply ${settings.selection.label}: ${error.message}", error)
             }
         }
     }

@@ -6,6 +6,10 @@ from __future__ import annotations
 import json
 import logging
 import math
+import os
+import re
+import sys
+import uuid
 import pathlib
 import queue
 import socket
@@ -18,7 +22,7 @@ import wave
 from typing import Any
 
 
-PHONE_HOST = "your-device-host"
+PHONE_HOST = os.environ.get("AUDIOREPEATER_PHONE_HOST", "")
 FRIDA_ENDPOINT = ("127.0.0.1", 27043)
 REMOTE_DOCUMENTS = "/var/mobile/Documents"
 REMOTE_AUDIO = f"{REMOTE_DOCUMENTS}/RemoteAudio"
@@ -29,15 +33,15 @@ REMOTE_CANCEL = f"{REMOTE_DOCUMENTS}/ioaudio2-playback-cancel.json"
 KEEPALIVE = "/var/jb/usr/local/bin/a2m_c0004_audiorepeater_keepalive"
 
 BRIDGE_ROOT = pathlib.Path(__file__).resolve().parent
-SSH_KEY = pathlib.Path("~/.ssh/id_ed25519").expanduser()
-PYTHON = pathlib.Path("~/.venvs/a2m-frida/bin/python").expanduser()
+SSH_KEY = pathlib.Path(os.environ.get("AUDIOREPEATER_SSH_KEY", "~/.ssh/id_ed25519")).expanduser()
+PYTHON = pathlib.Path(os.environ.get("AUDIOREPEATER_PYTHON", sys.executable)).expanduser()
 INJECTOR = BRIDGE_ROOT / "inject_wav_ioaudio2.py"
 INJECTOR_SCRIPT = BRIDGE_ROOT / "inject_wav_ioaudio2.js"
 VOLUME_SCRIPT = BRIDGE_ROOT / "set_media_volume.js"
 KEEPALIVE_SOURCE = (
     BRIDGE_ROOT / "audiorepeater_ioaudio2_keepalive.sh"
 )
-RUNS = BRIDGE_ROOT / "runs"
+RUNS = pathlib.Path(os.environ.get("AUDIOREPEATER_RUNS", "~/.local/share/audiorepeater/ioaudio2-runs")).expanduser()
 SSH_CONTROL_PATH = BRIDGE_ROOT / "ssh-control-%r@%h:%p"
 
 STATIC_RING_FRAMES = 15_840
@@ -744,7 +748,7 @@ def play_timeline(
                 request_id,
                 "accepted",
                 message=(
-                    "c0004 IOAudio2 ring 재연결 중 "
+                    "Reconnecting the c0004 IOAudio2 ring "
                     f"({attempt + 1}/{INJECTOR_MAX_ATTEMPTS})"
                 ),
             )
@@ -758,8 +762,13 @@ def play_timeline(
 def validate_request(request: dict[str, Any]) -> None:
     if request.get("schema") != "audiorepeater_ioaudio2_request_v1":
         raise ValueError("unsupported request schema")
-    if not request.get("requestID"):
-        raise ValueError("missing requestID")
+    request_id = request.get("requestID")
+    if not isinstance(request_id, str):
+        raise ValueError("requestID must be a UUID string")
+    try:
+        uuid.UUID(request_id)
+    except ValueError as error:
+        raise ValueError("requestID must be a UUID string") from error
     items = request.get("items")
     if not isinstance(items, list) or not items:
         raise ValueError("empty item list")
@@ -793,7 +802,7 @@ def process_request(request: dict[str, Any]) -> None:
     write_status(
         request_id,
         "accepted",
-        message="c0004 IOAudio2 ring 준비 중",
+        message="Preparing the c0004 IOAudio2 ring",
     )
     install_keepalive()
     ensure_frida_tunnel()
@@ -812,7 +821,7 @@ def process_request(request: dict[str, Any]) -> None:
         staged_items: list[tuple[dict[str, Any], pathlib.Path]] = []
         for index, item in enumerate(request["items"]):
             if read_cancel_request(request_id):
-                write_status(request_id, "cancelled", message="재생 정지됨")
+                write_status(request_id, "cancelled", message="Playback stopped")
                 return
 
             local_wav = temporary_root / f"{index:02d}.wav"
@@ -857,13 +866,15 @@ def process_request(request: dict[str, Any]) -> None:
             )
 
         if not completed:
-            write_status(request_id, "cancelled", message="재생 정지됨")
+            write_status(request_id, "cancelled", message="Playback stopped")
             return
 
-    write_status(request_id, "complete", message="재생 완료")
+    write_status(request_id, "complete", message="Playback complete")
 
 
 def preflight() -> None:
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.:-]*", PHONE_HOST):
+        raise ValueError("Set AUDIOREPEATER_PHONE_HOST to the target phone hostname or IP address")
     required = (
         SSH_KEY,
         PYTHON,

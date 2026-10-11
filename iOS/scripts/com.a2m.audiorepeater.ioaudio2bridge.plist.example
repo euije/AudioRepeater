@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.a2m.audiorepeater.ioaudio2bridge</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__HOME__/.venvs/a2m-frida/bin/python</string>
+    <string>__HOME__/AudioRepeaterIOSWork/ioaudio2-bridge/ioaudio2_app_bridge.py</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>AUDIOREPEATER_PHONE_HOST</key>
+    <string>__PHONE_HOST__</string>
+    <key>AUDIOREPEATER_SSH_KEY</key>
+    <string>__HOME__/.ssh/id_ed25519</string>
+  </dict>
+  <key>WorkingDirectory</key>
+  <string>__HOME__/AudioRepeaterIOSWork/ioaudio2-bridge</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>5</integer>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>StandardOutPath</key>
+  <string>__HOME__/AudioRepeaterIOSWork/ioaudio2-bridge/bridge.stdout.log</string>
+  <key>StandardErrorPath</key>
+  <string>__HOME__/AudioRepeaterIOSWork/ioaudio2-bridge/bridge.stderr.log</string>
+</dict>
+</plist>

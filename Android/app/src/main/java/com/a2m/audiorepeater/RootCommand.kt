@@ -19,4 +19,4 @@ internal fun resolveRootShell(
         File(candidate).let { file -> file.isFile && file.canExecute() }
     }
 ): String = rootShellCandidates(path).firstOrNull(isExecutable)
-    ?: error("Direct ALSA에는 루트 권한이 필요합니다. su 실행 파일을 찾을 수 없습니다. 루팅된 기기에서 실행하세요.")
+    ?: error("Direct ALSA requires root access. The su executable was not found. Use a rooted device.")

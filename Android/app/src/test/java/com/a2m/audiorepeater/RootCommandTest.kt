@@ -33,6 +33,6 @@ class RootCommandTest {
     fun missingRootExplainsTheRequiredDeviceState() {
         val failure = runCatching { resolveRootShell(null) { false } }.exceptionOrNull()
         assertTrue(failure is IllegalStateException)
-        assertTrue(failure?.message.orEmpty().contains("루트 권한이 필요"))
+        assertTrue(failure?.message.orEmpty().contains("requires root access"))
     }
 }

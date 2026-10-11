@@ -113,8 +113,9 @@ import kotlinx.coroutines.withContext
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val debugAudioConfig =
+        val debugAudioConfig = if (BuildConfig.DEBUG) {
             DebugAudioConfig.from(intent) ?: applicationContext.loadPersistedDebugAudioConfig()
+        } else null
         enableEdgeToEdge()
         setContent {
             AudioRepeaterTheme {
@@ -179,7 +180,7 @@ internal fun AudioRepeaterApp(debugAudioConfig: DebugAudioConfig? = null) {
                 if (state is RecordingUiState.Completed) {
                     scope.launch {
                         snackbarHostState.showSnackbar(
-                            "UNPROCESSED 녹음 완료: ${File(state.filePath).name}"
+                            "UNPROCESSED recording saved: ${File(state.filePath).name}"
                         )
                     }
                 }
@@ -231,10 +232,10 @@ internal fun AudioRepeaterApp(debugAudioConfig: DebugAudioConfig? = null) {
 
                 val message = when {
                     importResult.items.isNotEmpty() && importResult.skippedCount > 0 -> {
-                        "${importResult.items.size}개 추가, ${importResult.skippedCount}개 건너뜀"
+                        "Added ${importResult.items.size}; skipped ${importResult.skippedCount}"
                     }
-                    importResult.items.isNotEmpty() -> "${importResult.items.size}개 추가됨"
-                    else -> "추가된 wav 파일이 없습니다"
+                    importResult.items.isNotEmpty() -> "Added ${importResult.items.size} files"
+                    else -> "No WAV files were added"
                 }
                 snackbarHostState.showSnackbar(message)
             } finally {
@@ -252,7 +253,7 @@ internal fun AudioRepeaterApp(debugAudioConfig: DebugAudioConfig? = null) {
             player.play(request)
         } else if (!granted) {
             scope.launch {
-                snackbarHostState.showSnackbar("마이크 녹음을 위해 권한이 필요합니다")
+                snackbarHostState.showSnackbar("Microphone permission is required to record audio")
             }
         }
     }
@@ -283,6 +284,7 @@ internal fun AudioRepeaterApp(debugAudioConfig: DebugAudioConfig? = null) {
         var config = debugAudioConfig
         var debugFiles = config?.localPaths?.map { path -> File(path) }.orEmpty()
         if (config == null) {
+            if (!BuildConfig.DEBUG) return@LaunchedEffect
             debugFiles = context.fallbackDebugAudioFiles()
             if (debugFiles.isEmpty()) return@LaunchedEffect
             config = DebugAudioConfig(
@@ -297,7 +299,7 @@ internal fun AudioRepeaterApp(debugAudioConfig: DebugAudioConfig? = null) {
                 forceStereoRouteAssist = false,
                 directAlsaPcmDevice = null,
                 recordUnprocessed = false,
-                autoPlayOnLoad = true
+                autoPlayOnLoad = false
             )
             Log.i(LOG_TAG, "debug fallback files=${debugFiles.size}")
         }
@@ -325,7 +327,7 @@ internal fun AudioRepeaterApp(debugAudioConfig: DebugAudioConfig? = null) {
         }
         val missingFile = debugFiles.firstOrNull { file -> !file.exists() }
         if (missingFile != null) {
-            snackbarHostState.showSnackbar("디버그 오디오 파일이 없습니다: ${missingFile.name}")
+            snackbarHostState.showSnackbar("Debug audio file not found: ${missingFile.name}")
             return@LaunchedEffect
         }
 
@@ -357,7 +359,7 @@ internal fun AudioRepeaterApp(debugAudioConfig: DebugAudioConfig? = null) {
             selectedBackend == PlaybackBackend.ALSA_INIT
         )
         if (requestedBackend != selectedBackend && activeConfig.autoPlayOnLoad) {
-            snackbarHostState.showSnackbar("요청한 ${requestedBackend.label} 경로를 사용할 수 없어 자동 재생을 중단했습니다.")
+            snackbarHostState.showSnackbar("Autoplay stopped: the requested ${requestedBackend.label} path is unavailable.")
             return@LaunchedEffect
         }
         if (activeConfig.autoPlayOnLoad) {
@@ -429,12 +431,12 @@ internal fun AudioRepeaterApp(debugAudioConfig: DebugAudioConfig? = null) {
                 value = processing, onChange = { processing = it }, enabled = !isPlaying,
                 supportsProcessing = selectedBackend == PlaybackBackend.AUDIO_TRACK
             )
-            SettingsDivider("녹음")
+            SettingsDivider("Recording")
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Checkbox(checked = recordUnprocessed, onCheckedChange = { recordUnprocessed = it },
                     enabled = !isPlaying, modifier = Modifier.size(36.dp))
                 Column(Modifier.weight(1f)) {
-                    Text("마이크 동시 녹음 (UNPROCESSED)", style = MaterialTheme.typography.bodySmall)
+                    Text("Record microphone (UNPROCESSED)", style = MaterialTheme.typography.bodySmall)
                     RecordingStatusText(state = recordingState)
                 }
             }
@@ -445,23 +447,23 @@ internal fun AudioRepeaterApp(debugAudioConfig: DebugAudioConfig? = null) {
             ) {
                 RepeatTextField(value = defaultRepeatText,
                     onValueChange = { defaultRepeatText = sanitizeRepeatInput(it) },
-                    label = "기본 반복", modifier = Modifier.width(92.dp), enabled = !isPlaying)
+                    label = "Default repeats", modifier = Modifier.width(168.dp), enabled = !isPlaying)
                 FilledTonalButton(onClick = { documentLauncher.launch(createWavPickerIntent()) },
                     enabled = rootCheckComplete && debugConfigLoaded && !isPlaying && !isImporting && defaultRepeat != null) {
                     Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Text(if (isImporting) "추가 중" else "여러개 추가")
+                    Text(if (isImporting) "Adding" else "Add files")
                 }
                 FilledTonalButton(onClick = {
                     items.indices.forEach { index -> items[index] = items[index].copy(repeatText = defaultRepeatText) }
                 }, enabled = !isPlaying && defaultRepeat != null && items.isNotEmpty()) {
-                    Text("적용")
+                    Text("Apply")
                 }
                 DelayTextField(value = sameFileDelayText,
                     onValueChange = { sameFileDelayText = sanitizeDelayInput(it) },
-                    label = "같은 파일 딜레이(초)", modifier = Modifier.width(168.dp), enabled = !isPlaying)
+                    label = "Repeat delay (s)", modifier = Modifier.width(168.dp), enabled = !isPlaying)
                 DelayTextField(value = differentFileDelayText,
                     onValueChange = { differentFileDelayText = sanitizeDelayInput(it) },
-                    label = "파일 간 딜레이(초)", modifier = Modifier.width(160.dp), enabled = !isPlaying)
+                    label = "File delay (s)", modifier = Modifier.width(160.dp), enabled = !isPlaying)
             }
 
             Row(
@@ -505,7 +507,7 @@ internal fun AudioRepeaterApp(debugAudioConfig: DebugAudioConfig? = null) {
                         modifier = Modifier.size(18.dp)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text(text = if (recordUnprocessed) "재생+녹음" else "재생")
+                    Text(text = if (recordUnprocessed) "Play + record" else "Play")
                 }
 
                 FilledTonalButton(
@@ -518,7 +520,7 @@ internal fun AudioRepeaterApp(debugAudioConfig: DebugAudioConfig? = null) {
                         modifier = Modifier.size(18.dp)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text(text = "정지")
+                    Text(text = "Stop")
                 }
 
                 PlaybackStatusText(
@@ -532,7 +534,7 @@ internal fun AudioRepeaterApp(debugAudioConfig: DebugAudioConfig? = null) {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "목록 (${items.count { it.isPlaybackEnabled }}/${items.size})",
+                    text = "Queue (${items.count { it.isPlaybackEnabled }}/${items.size})",
                     modifier = Modifier.weight(1f),
                     style = MaterialTheme.typography.titleSmall
                 )
@@ -555,7 +557,7 @@ internal fun AudioRepeaterApp(debugAudioConfig: DebugAudioConfig? = null) {
                     modifier = Modifier.size(36.dp)
                 )
                 Text(
-                    text = "전체 선택",
+                    text = "Select all",
                     style = MaterialTheme.typography.labelMedium
                 )
             }
@@ -652,12 +654,12 @@ private fun PlaybackStatusText(
     modifier: Modifier = Modifier
 ) {
     val text = when (state) {
-        PlaybackUiState.Idle -> "대기"
+        PlaybackUiState.Idle -> "Idle"
         is PlaybackUiState.Playing -> {
-            "${state.currentDisplayName} · ${state.currentRepeat}/${state.totalRepeats}회"
+            "${state.currentDisplayName} · ${state.currentRepeat}/${state.totalRepeats}"
         }
         is PlaybackUiState.Waiting -> {
-            "${state.currentDisplayName} · ${state.nextRepeat}/${state.totalRepeats}회 대기"
+            "${state.currentDisplayName} · waiting for ${state.nextRepeat}/${state.totalRepeats}"
         }
     }
 
@@ -677,23 +679,23 @@ private fun RecordingStatusText(state: RecordingUiState) {
         RecordingUiState.Idle -> "48 kHz · mono · PCM16 WAV"
         is RecordingUiState.Recording -> {
             val supportNote = if (state.platformReportsUnprocessedSupport == false) {
-                " · 기기 원시지원 미보고"
+                " · unprocessed support not reported"
             } else {
                 ""
             }
-            "녹음 중: ${File(state.filePath).name}$supportNote"
+            "Recording: ${File(state.filePath).name}$supportNote"
         }
         is RecordingUiState.Completed -> {
             val seconds = state.durationMillis / 1_000.0
             val supportNote = if (state.platformReportsUnprocessedSupport == false) {
-                " · 기기 원시지원 미보고"
+                " · unprocessed support not reported"
             } else {
                 ""
             }
-            "완료: ${File(state.filePath).name} · " +
-                "${String.format(Locale.US, "%.1f", seconds)}초$supportNote"
+            "Saved: ${File(state.filePath).name} · " +
+                "${String.format(Locale.US, "%.1f", seconds)} s$supportNote"
         }
-        is RecordingUiState.Failed -> "녹음 실패: ${state.message}"
+        is RecordingUiState.Failed -> "Recording failed: ${state.message}"
     }
     Text(
         text = text,
@@ -721,7 +723,7 @@ private fun EmptyListSurface(modifier: Modifier = Modifier) {
             contentAlignment = Alignment.Center
         ) {
             Text(
-                text = "wav 파일 없음",
+                text = "No WAV files",
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -788,7 +790,7 @@ private fun WavItemRow(
             RepeatTextField(
                 value = item.repeatText,
                 onValueChange = onRepeatChange,
-                label = "횟수",
+                label = "Repeats",
                 modifier = Modifier.width(82.dp),
                 enabled = enabled && item.isPlaybackEnabled
             )
@@ -800,7 +802,7 @@ private fun WavItemRow(
             ) {
                 Icon(
                     imageVector = Icons.Default.Delete,
-                    contentDescription = "삭제"
+                    contentDescription = "Delete"
                 )
             }
         }
@@ -858,7 +860,8 @@ internal data class DebugAudioConfig(
     val autoPlayOnLoad: Boolean
 ) {
     companion object {
-        fun from(intent: Intent): DebugAudioConfig? {
+        fun from(intent: Intent, debugBuild: Boolean = BuildConfig.DEBUG): DebugAudioConfig? {
+            if (!debugBuild) return null
             val paths = intent.debugAudioPaths()
                 ?: return null
             val repeatCount = intent.getIntExtra(DEBUG_REPEAT_COUNT_EXTRA, 10).coerceAtLeast(1)
@@ -971,19 +974,18 @@ private fun selectedPlaybackPathStatus(
 ): String {
     return when {
         useDirectAlsa -> if (usesPixel10Mmap(Build.DEVICE, Build.VERSION.SDK_INT)) {
-            "선택: Direct ALSA (root / mmap + NOIRQ)"
+            "Selected: Direct ALSA (root / mmap + NOIRQ)"
         } else {
-            "선택: Direct ALSA (root / TinyALSA pcm_write)"
+            "Selected: Direct ALSA (root / TinyALSA pcm_write)"
         }
-        useDirectAlsaInitHijack -> "선택: Direct ALSA (init-hijack)"
-        useAaudioExclusive -> "선택: AAudio EXCLUSIVE"
-        else -> "선택: AudioTrack"
+        useDirectAlsaInitHijack -> "Selected: Direct ALSA (init-hijack)"
+        useAaudioExclusive -> "Selected: AAudio EXCLUSIVE"
+        else -> "Selected: AudioTrack"
     }
 }
 
 private fun Context.fallbackDebugAudioFiles(): List<File> {
     val roots = listOf(
-        File(filesDir, "debug-audio/example"),
         File(filesDir, "debug-audio")
     )
     for (root in roots) {
@@ -1805,10 +1807,10 @@ private data class RootAlsaProfile(
                     )
                 }
                 else -> error(
-                    "Direct ALSA는 검증된 Pixel 4(flame), Pixel 7(panther), " +
+                    "Direct ALSA supports only the verified profiles for Pixel 4(flame), Pixel 7(panther), " +
                         "Pixel 10(frankel), " +
                         "Redmi Note 7(lavender), Galaxy S10(beyond1), " +
-                        "ZFlip3(b2q), ROG5s(ASUS_I005_1)에서만 지원합니다: " +
+                        "ZFlip3(b2q), and ROG5s(ASUS_I005_1): " +
                         "${Build.MODEL}/${Build.DEVICE}"
                 )
             }
@@ -1983,8 +1985,8 @@ private class AudioQueuePlayer(
         try {
             val backend = PlaybackBackend.fromLegacy(useDirectAlsa, useDirectAlsaInitHijack, useAaudioExclusive)
             processing.validateFor(backend)
-            if (useDirectAlsa) check(hasRootAccess()) { "ALSA(root)를 사용하려면 앱에 루트 권한을 허용하세요." }
-            if (useDirectAlsaInitHijack) check(deviceSupportsInitAlsa()) { "이 기기와 빌드는 ALSA(init)을 지원하지 않습니다." }
+            if (useDirectAlsa) check(hasRootAccess()) { "Grant root access to the app to use ALSA(root)." }
+            if (useDirectAlsaInitHijack) check(deviceSupportsInitAlsa()) { "ALSA(init) does not support this device and build." }
             activeProcessing = processing
             if (backend == PlaybackBackend.AUDIO_TRACK) {
                 activeRouting = PlaybackRouting(context, processing.location).also { it.apply() }
@@ -2031,7 +2033,7 @@ private class AudioQueuePlayer(
                 } catch (exception: Exception) {
                     if (useAaudioExclusive || useDirectAlsa) {
                         throw IllegalArgumentException(
-                            "$requestedPath 경로는 PCM WAV 파일만 재생할 수 있습니다: ${item.displayName}",
+                            "$requestedPath supports only PCM WAV files: ${item.displayName}",
                             exception
                         )
                     }
@@ -2115,7 +2117,7 @@ private class AudioQueuePlayer(
             if (!stopped) {
                 Log.e(LOG_TAG, "$requestedPath playback failed", exception)
                 postError(
-                    "$requestedPath 재생 실패: ${exception.message ?: exception.javaClass.simpleName}",
+                    "$requestedPath playback failed: ${exception.message ?: exception.javaClass.simpleName}",
                     runId
                 )
             }
@@ -2199,12 +2201,12 @@ private class AudioQueuePlayer(
             Log.e(LOG_TAG, "playRepeat failed file=${item.displayName} repeat=$currentRepeat", result.exceptionOrNull())
 
             if (retryCount >= MAX_PLAYBACK_RETRIES) {
-                postError("${item.displayName} ${currentRepeat}회차 재생 실패. 다음 파일로 건너뜁니다", runId)
+                postError("${item.displayName}: repeat $currentRepeat failed. Skipping to the next file.", runId)
                 return false
             }
 
             retryCount += 1
-            postError("${item.displayName} ${currentRepeat}회차 재생 실패. 다시 시도합니다 (${retryCount}/${MAX_PLAYBACK_RETRIES})", runId)
+            postError("${item.displayName}: repeat $currentRepeat failed. Retrying (${retryCount}/${MAX_PLAYBACK_RETRIES}).", runId)
             waitBeforeNext(
                 runId = runId,
                 delayMillis = RETRY_DELAY_MILLIS,
@@ -2256,7 +2258,7 @@ private class AudioQueuePlayer(
             effect = AttachedPlaybackEffect.attach(audioTrack.audioSessionId, wavSpec.channelCount,
                 wavSpec.sampleRate, activeProcessing.effects)
             val pathLabel = if (useLowLatency) "AudioTrack LOW_LATENCY" else "AudioTrack"
-            postPathStatus("실제: $pathLabel", runId)
+            postPathStatus("Actual: $pathLabel", runId)
             Log.i(
                 LOG_TAG,
                 "$pathLabel stream start file=${item.displayName} repeats=${item.repeatCount} " +
@@ -2285,7 +2287,7 @@ private class AudioQueuePlayer(
                     writeFully(audioTrack, buffer, byteCount)
                     if (!routeVerified && !stopped) {
                         val route = activeRouting?.verify({ audioTrack.routedDevice }, { stopped })
-                        postPathStatus("실제: $pathLabel · $route · 효과: ${activeProcessing.effects.selection.label}", runId)
+                        postPathStatus("Actual: $pathLabel · $route · Effect: ${activeProcessing.effects.selection.label}", runId)
                         routeVerified = true
                     }
                 }
@@ -2334,7 +2336,7 @@ private class AudioQueuePlayer(
 
         try {
             postPathStatus(
-                "실제: AAudio EXCLUSIVE / LOW_LATENCY / ${info.sampleRate} Hz / burst ${info.framesPerBurst}",
+                "Actual: AAudio EXCLUSIVE / LOW_LATENCY / ${info.sampleRate} Hz / burst ${info.framesPerBurst}",
                 runId
             )
             Log.i(
@@ -2479,7 +2481,7 @@ private class AudioQueuePlayer(
         var rootOutput = ""
 
         try {
-            postPathStatus("준비: 무음 AudioTrack으로 speaker route 활성화", runId)
+            postPathStatus("Preparing: activating speaker route with a silent AudioTrack", runId)
             routeAssistTrack.play()
             val routeAssistThread = startSilentRouteAssistWriter(
                 audioTrack = routeAssistTrack,
@@ -2497,7 +2499,7 @@ private class AudioQueuePlayer(
             if (stopped) return
 
             postPathStatus(
-                "실제: Direct ALSA ${profile.apiLabel} / ${profile.pcmNode} / ${wavSpec.sampleRate} Hz",
+                "Actual: Direct ALSA ${profile.apiLabel} / ${profile.pcmNode} / ${wavSpec.sampleRate} Hz",
                 runId
             )
             var streamVerified = false
@@ -2553,8 +2555,8 @@ private class AudioQueuePlayer(
                             "cleanupExit=${cleanupResult.first}"
                     )
                     postPathStatus(
-                        if (pcmOpenRetry) "재시도: ALSA 장치가 열릴 때까지 대기"
-                        else "재시도: ALSA PCM 조기 종료 감지",
+                        if (pcmOpenRetry) "Retrying: waiting for the ALSA device to open"
+                        else "Retrying: ALSA PCM ended early",
                         runId
                     )
                     Thread.sleep(
@@ -2572,7 +2574,7 @@ private class AudioQueuePlayer(
             }
             check(streamVerified) { "Direct ALSA stream was not verified" }
             postPathStatus(
-                "실제: Direct ALSA ${profile.apiLabel} / ${profile.pcmNode} / ${wavSpec.sampleRate} Hz",
+                "Actual: Direct ALSA ${profile.apiLabel} / ${profile.pcmNode} / ${wavSpec.sampleRate} Hz",
                 runId
             )
             Log.i(
@@ -2918,7 +2920,7 @@ private class AudioQueuePlayer(
         differentFileDelayMillis: Long
     ) {
         require(deviceSupportsInitAlsa()) {
-            "Direct ALSA (init-hijack)는 검증된 Pixel 4 빌드와 커널에서만 지원합니다"
+            "Direct ALSA (init-hijack) requires the verified Pixel 4 build and kernel"
         }
         val profile = RootAlsaProfile.current(null)
         val workdir = File(context.filesDir, INIT_HIJACK_WORKDIR_NAME).apply { mkdirs() }
@@ -2947,7 +2949,7 @@ private class AudioQueuePlayer(
         synchronized(initHijackShellLock) {
             val session = acquireInitHijackShell(workdir, server, runId)
             try {
-                postPathStatus("init-hijack: 재생 중...", runId)
+                postPathStatus("init-hijack: playing...", runId)
 
                 items.forEachIndexed { itemIndex, item ->
                     if (stopped) return@forEachIndexed
@@ -2956,7 +2958,7 @@ private class AudioQueuePlayer(
                         parseWavPcmFile(File(item.localPath))
                     } catch (exception: Exception) {
                         throw IllegalArgumentException(
-                            "Direct ALSA (init-hijack) 경로는 PCM WAV 파일만 재생할 수 있습니다: ${item.displayName}",
+                            "Direct ALSA (init-hijack) supports only PCM WAV files: ${item.displayName}",
                             exception
                         )
                     }
@@ -3017,10 +3019,10 @@ private class AudioQueuePlayer(
         if (isSelinuxPermissive()) {
             Log.i(LOG_TAG, "A2M_INIT_HIJACK_PERMISSIVE already permissive")
         } else {
-            postPathStatus("init-hijack: SELinux permissive 적용 중...", runId)
+            postPathStatus("init-hijack: applying SELinux permissive mode...", runId)
             val permissiveAcquired = waitForPermissiveWithRetry(runId, workdir)
             if (!permissiveAcquired) {
-                error("init-hijack: SELinux permissive 적용 실패 (조용한 힙에서 재시도)")
+                error("init-hijack: SELinux permissive setup failed (retry while the device is idle)")
             }
             Log.i(LOG_TAG, "A2M_INIT_HIJACK_PERMISSIVE_OK")
         }
@@ -3030,7 +3032,7 @@ private class AudioQueuePlayer(
         while (s34Attempt < INIT_HIJACK_S34_ATTEMPTS && !connected && !stopped) {
             s34Attempt += 1
             postPathStatus(
-                "init-hijack: root shell 획득 시도 $s34Attempt/${INIT_HIJACK_S34_ATTEMPTS}...",
+                "init-hijack: root shell attempt $s34Attempt/${INIT_HIJACK_S34_ATTEMPTS}...",
                 runId
             )
             val s34Pid = ExploitNative.runInitHijack(workdir.absolutePath)
@@ -3053,7 +3055,7 @@ private class AudioQueuePlayer(
             }
         }
         if (!connected) {
-            error("init-hijack: root shell 획득 실패 (${INIT_HIJACK_S34_ATTEMPTS}회 시도)")
+            error("init-hijack: root shell failed after ${INIT_HIJACK_S34_ATTEMPTS} attempts")
         }
 
         val session = checkNotNull(initHijackShell)
@@ -3096,7 +3098,7 @@ private class AudioQueuePlayer(
                 LOG_TAG,
                 "A2M_INIT_HIJACK_PERMISSIVE child pid=$pid attempt=$attempts"
             )
-            postPathStatus("init-hijack: SELinux permissive 시도 $attempts...", runId)
+            postPathStatus("init-hijack: SELinux permissive attempt $attempts...", runId)
             val deadline =
                 SystemClock.elapsedRealtime() + INIT_HIJACK_PERMISSIVE_TIMEOUT_MILLIS
             while (!stopped && SystemClock.elapsedRealtime() < deadline) {
@@ -3125,7 +3127,7 @@ private class AudioQueuePlayer(
             "ALSA init-hijack start profile=${profile.label} file=${item.displayName} " +
                 "aggregate=$wavPath"
         )
-        postPathStatus("실제: Direct ALSA (init-hijack) / ${profile.pcmNode}", runId)
+        postPathStatus("Actual: Direct ALSA (init-hijack) / ${profile.pcmNode}", runId)
 
         val routeEnabled = session.sendCommand(
             profile.routeEnableCommand,
@@ -3186,7 +3188,7 @@ private class AudioQueuePlayer(
                 val remaining = deadline - SystemClock.elapsedRealtime()
                 if (remaining <= 0L) {
                     throw IllegalStateException(
-                        "init-hijack: root shell 연결 대기 시간 초과 " +
+                        "init-hijack: root shell connection timed out " +
                             "(${INIT_HIJACK_ACCEPT_TIMEOUT_MILLIS}ms)"
                     )
                 }
@@ -3197,7 +3199,7 @@ private class AudioQueuePlayer(
                 } catch (exception: Exception) {
                     if (stopped) throw exception
                     throw IllegalStateException(
-                        "init-hijack: root shell 연결 수락 실패",
+                        "init-hijack: failed to accept the root shell connection",
                         exception
                     )
                 }
@@ -3225,7 +3227,7 @@ private class AudioQueuePlayer(
                 reader = null
                 writer = null
             }
-            error("init-hijack: root shell 연결 실패 (${INIT_HIJACK_MAX_ACCEPTS}회 시도)")
+            error("init-hijack: root shell connection failed after ${INIT_HIJACK_MAX_ACCEPTS} attempts")
         }
 
         /** True if the shell connection is still open and answers as root. */
@@ -3241,15 +3243,15 @@ private class AudioQueuePlayer(
         fun verifyRoot(): String {
             val output = sendCommand("id", INIT_HIJACK_COMMAND_TIMEOUT_MILLIS)
             check(output.contains("uid=0(root)")) {
-                "init-hijack: root identity 확인 실패: $output"
+                "init-hijack: root identity verification failed: $output"
             }
             return output.trim()
         }
 
         fun sendCommand(command: String, timeoutMillis: Int): String {
-            val out = checkNotNull(writer) { "init-hijack: shell 연결 없음" }
-            val inReader = checkNotNull(reader) { "init-hijack: shell 연결 없음" }
-            val client = checkNotNull(socket) { "init-hijack: shell 연결 없음" }
+            val out = checkNotNull(writer) { "init-hijack: no shell connection" }
+            val inReader = checkNotNull(reader) { "init-hijack: no shell connection" }
+            val client = checkNotNull(socket) { "init-hijack: no shell connection" }
             val id = markerId++
             val collected = mutableListOf<String>()
             out.write("echo __A2M_RC_START__ $id\n".toByteArray(StandardCharsets.US_ASCII))
@@ -3320,7 +3322,7 @@ private class AudioQueuePlayer(
 
             mediaPlayer.start()
             val route = activeRouting?.verify({ mediaPlayer.routedDevice }, { stopped })
-            postPathStatus("실제: MediaPlayer · $route · 효과: ${activeProcessing.effects.selection.label}", playbackRunId)
+            postPathStatus("Actual: MediaPlayer · $route · Effect: ${activeProcessing.effects.selection.label}", playbackRunId)
             val deadline = SystemClock.elapsedRealtime() + timeoutMillis
             while (!stopped) {
                 val remainingMillis = deadline - SystemClock.elapsedRealtime()
@@ -3615,7 +3617,7 @@ private class AudioQueuePlayer(
 
         if (audioTrack.state != AudioTrack.STATE_INITIALIZED) {
             audioTrack.release()
-            error("AudioTrack 초기화 실패")
+            error("AudioTrack initialization failed")
         }
         Log.i(
             LOG_TAG,
@@ -3761,9 +3763,9 @@ private object InitHijackListenerHolder {
 
 private fun parseWavPcmFile(file: File): WavPcmSpec {
     RandomAccessFile(file, "r").use { input ->
-        if (input.readFourCc() != "RIFF") error("RIFF header가 없습니다")
+        if (input.readFourCc() != "RIFF") error("Missing RIFF header")
         input.readUnsignedIntLe()
-        if (input.readFourCc() != "WAVE") error("WAVE header가 없습니다")
+        if (input.readFourCc() != "WAVE") error("Missing WAVE header")
 
         var formatChunk: WavFormatChunk? = null
         var dataOffset: Long? = null
@@ -3788,20 +3790,20 @@ private fun parseWavPcmFile(file: File): WavPcmSpec {
             input.seek((chunkDataOffset + paddedChunkSize).coerceAtMost(input.length()))
         }
 
-        val resolvedFormatChunk = formatChunk ?: error("fmt chunk가 없습니다")
-        val resolvedDataOffset = dataOffset ?: error("data chunk가 없습니다")
-        val resolvedDataSize = dataSize ?: error("data chunk가 없습니다")
+        val resolvedFormatChunk = formatChunk ?: error("Missing fmt chunk")
+        val resolvedDataOffset = dataOffset ?: error("Missing data chunk")
+        val resolvedDataSize = dataSize ?: error("Missing data chunk")
 
         if (resolvedFormatChunk.channelCount !in 1..2) {
-            error("${resolvedFormatChunk.channelCount}채널 wav는 지원하지 않습니다")
+            error("Unsupported WAV channel count: ${resolvedFormatChunk.channelCount}")
         }
         if (resolvedFormatChunk.bitsPerSample % 8 != 0) {
-            error("${resolvedFormatChunk.bitsPerSample}bit wav는 지원하지 않습니다")
+            error("Unsupported WAV bit depth: ${resolvedFormatChunk.bitsPerSample}")
         }
 
         val expectedFrameSize = resolvedFormatChunk.channelCount * (resolvedFormatChunk.bitsPerSample / 8)
         if (resolvedFormatChunk.blockAlign != expectedFrameSize) {
-            error("wav block align이 맞지 않습니다")
+            error("Invalid WAV block alignment")
         }
 
         val encoding = when {
@@ -3820,7 +3822,7 @@ private fun parseWavPcmFile(file: File): WavPcmSpec {
             resolvedFormatChunk.audioFormat == WAV_FORMAT_IEEE_FLOAT && resolvedFormatChunk.bitsPerSample == 32 -> {
                 AudioFormat.ENCODING_PCM_FLOAT
             }
-            else -> error("PCM 8/16/24/32bit 또는 float 32bit wav만 지원합니다")
+            else -> error("Only PCM 8/16/24/32-bit or float32 WAV files are supported")
         }
 
         return WavPcmSpec(
@@ -3845,7 +3847,7 @@ private fun RandomAccessFile.readFourCc(): String {
 }
 
 private fun RandomAccessFile.readWavFormatChunk(chunkSize: Long): WavFormatChunk {
-    if (chunkSize < WAV_MIN_FMT_CHUNK_SIZE) error("fmt chunk가 너무 짧습니다")
+    if (chunkSize < WAV_MIN_FMT_CHUNK_SIZE) error("WAV fmt chunk is too short")
 
     val baseAudioFormat = readUnsignedShortLe()
     val channelCount = readUnsignedShortLe()
@@ -3867,12 +3869,12 @@ private fun RandomAccessFile.readWavFormatChunk(chunkSize: Long): WavFormatChunk
     }
 
     if (chunkSize < WAV_EXTENSIBLE_FMT_CHUNK_SIZE) {
-        error("확장 wav fmt chunk가 너무 짧습니다")
+        error("Extended WAV fmt chunk is too short")
     }
 
     val extensionSize = readUnsignedShortLe()
     if (extensionSize < WAV_EXTENSIBLE_MIN_EXTENSION_SIZE) {
-        error("확장 wav fmt 정보가 부족합니다")
+        error("Extended WAV fmt information is incomplete")
     }
 
     readUnsignedShortLe()
@@ -3895,7 +3897,7 @@ private fun RandomAccessFile.readWavSubFormat(): Int {
     val guidTail = ByteArray(WAV_SUBFORMAT_GUID_TAIL.size)
     readFully(guidTail)
     if (!guidTail.contentEquals(WAV_SUBFORMAT_GUID_TAIL)) {
-        error("지원되지 않는 wav sub format입니다")
+        error("Unsupported WAV subformat")
     }
     return first
 }
@@ -3910,7 +3912,7 @@ private fun WavFormatChunk.toAudioTrackChannelMask(): Int {
                 else -> AudioFormat.CHANNEL_OUT_STEREO
             }
         }
-        else -> error("${channelCount}채널 wav는 지원하지 않습니다")
+        else -> error("Unsupported WAV channel count: $channelCount")
     }
 }
 

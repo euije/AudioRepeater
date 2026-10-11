@@ -1,119 +1,92 @@
 # AudioRepeater iOS
 
-SwiftUI iOS port of the Android AudioRepeater app.
+The iOS app imports WAV files, queues repeats with configurable delays, and
+plays them with AVAudioEngine or RemoteIO. Files providers such as Google Drive
+can supply imported files. The app copies provider files before playback.
 
-## Features
+## Build
 
-- Pick multiple `.wav` files through the iOS Files picker.
-- Works with Google Drive when Drive is enabled as a Files provider.
-- Copies provider-backed files into the app cache before playback.
-- Applies a global repeat count, then allows per-file repeat editing.
-- Supports decimal delays for same-file repeats and different-file transitions.
-- Uses `AVAudioEngine` and `AVAudioPlayerNode` to schedule audio and silence buffers continuously.
-- Keeps the display awake while AudioRepeater is the active foreground app.
-- Accepts one-shot remote playback requests uploaded from a Windows computer.
+Open `AudioRepeaterIOS.xcodeproj` on a Mac with Xcode. Select your development
+team in Signing & Capabilities. The project does not contain a team ID.
+The deployment target is iOS 16. Features that require a newer system perform
+runtime availability checks; ScreenCaptureKit audio capture requires iOS 27.
 
-## Build On The Mac
+From this directory, build for the simulator:
 
-The working copy used during remote testing is:
-
-```bash
-~/AudioRepeaterIOSWork/iOS
+```sh
+xcodebuild -project AudioRepeaterIOS.xcodeproj \
+  -scheme AudioRepeaterIOS -sdk iphonesimulator \
+  -configuration Debug -derivedDataPath build/DerivedData build
 ```
 
-Build for simulator:
+For a device build, provide your own device and team identifiers:
 
-```bash
-cd ~/AudioRepeaterIOSWork/iOS
-xcodebuild \
-  -project AudioRepeaterIOS.xcodeproj \
-  -scheme AudioRepeaterIOS \
-  -sdk iphonesimulator \
-  -configuration Debug \
-  -derivedDataPath build/DerivedData \
-  build
-```
-
-Build for the currently connected simulator runtime, when Xcode destination
-matching is healthy:
-
-```bash
-cd ~/AudioRepeaterIOSWork/iOS
-xcodebuild \
-  -project AudioRepeaterIOS.xcodeproj \
-  -scheme AudioRepeaterIOS \
-  -sdk iphonesimulator18.5 \
-  -destination 'platform=iOS Simulator,name=iPhone 16,OS=18.4' \
-  -configuration Debug \
-  -derivedDataPath build/DerivedData \
-  build
-```
-
-Build for the wired iPhone after Developer Mode is enabled:
-
-```bash
-cd ~/AudioRepeaterIOSWork/iOS
-xcodebuild \
-  -project AudioRepeaterIOS.xcodeproj \
-  -scheme AudioRepeaterIOS \
-  -configuration Debug \
-  -destination 'id=YOUR_DEVICE_UDID' \
+```sh
+export AUDIOREPEATER_DEVICE_ID=YOUR_DEVICE_UDID
+export AUDIOREPEATER_TEAM_ID=YOUR_TEAM_ID
+xcodebuild -project AudioRepeaterIOS.xcodeproj \
+  -scheme AudioRepeaterIOS -configuration Debug \
+  -destination "id=$AUDIOREPEATER_DEVICE_ID" \
+  DEVELOPMENT_TEAM="$AUDIOREPEATER_TEAM_ID" \
   -derivedDataPath build/DeviceDerivedData \
-  -allowProvisioningUpdates \
-  -allowProvisioningDeviceRegistration \
-  build
+  -allowProvisioningUpdates build
 ```
 
-The iPhone 12 mini on iOS 16.3 uses the legacy MobileDevice path. Build
-`ios-deploy` once on the Mac:
+`scripts/build_install_stacktap.command` uses those two environment variables
+to build and install the app. It resolves the project relative to the script.
+Set `AUDIOREPEATER_IOS_ROOT` to override that directory, or
+`AUDIOREPEATER_DEVELOPER_DIR` to select another Xcode installation.
 
-```bash
-mkdir -p ~/AudioRepeaterIOSWork/tools
-git clone https://github.com/ios-control/ios-deploy.git ~/AudioRepeaterIOSWork/tools/ios-deploy
-cd ~/AudioRepeaterIOSWork/tools/ios-deploy
-xcodebuild -target ios-deploy -configuration Release CODE_SIGNING_ALLOWED=NO
-```
+## Remote playback from Windows
 
-Install the signed app after a successful device build:
+`scripts/play_remote.ps1` stages local WAV files on a Mac, uploads them into
+the app container, and optionally launches playback. Its default Mac working
+directory is `~/AudioRepeaterIOSWork`. It expects the built app under
+`iOS/build/DeviceDerivedData` and, for the legacy deployment path, `ios-deploy`
+under `tools/ios-deploy/build/Release` in that directory.
 
-```bash
-IOS_DEPLOY=~/AudioRepeaterIOSWork/tools/ios-deploy/build/Release/ios-deploy
-APP_PATH=~/AudioRepeaterIOSWork/iOS/build/DeviceDerivedData/Build/Products/Debug-iphoneos/AudioRepeaterIOS.app
-"$IOS_DEPLOY" \
-  --id YOUR_DEVICE_UDID \
-  --bundle "$APP_PATH" \
-  --justlaunch
-```
-
-On the first install, trust the Apple Development profile under
-`Settings > General > VPN & Device Management` on the iPhone.
-
-## Remote Playback From Windows
-
-The script copies local WAV files to the Mac, uploads them into the app
-container, launches the app with the debugger attached, waits for playback to
-finish, and prints the verified queue result.
+Specify the SSH host and device explicitly:
 
 ```powershell
-$files = @(
-    'C:\Audio\example-1.wav',
-    'C:\Audio\example-2.wav',
-    'C:\Audio\example-3.wav',
-    'C:\Audio\example-4.wav'
-)
-
-$playback = @{
-    WavPath = $files
-    RepeatCount = 10
-    SameFileDelaySeconds = 0.1
-    DifferentFileDelaySeconds = 0.25
-}
-
-.\iOS\scripts\play_remote.ps1 @playback
+.\scripts\play_remote.ps1 `
+  -WavPath @('C:\Audio\tone.wav', 'C:\Audio\sweep.wav') `
+  -MacHost 'your-mac-ssh-alias' `
+  -DeviceId 'YOUR_DEVICE_UDID' `
+  -RepeatCount 10 -SameFileDelaySeconds 0.1 -DifferentFileDelaySeconds 0.25
 ```
 
-Successful completion includes one `repeat=10/10` line for every file and:
+Use `-UseDeviceCtl` for devicectl.
+Pass `-MacDeveloperDir` only when the Mac needs a non-default Xcode installation.
+Do not commit local audio, device IDs, signing files, or SSH keys.
 
-```text
-AudioRepeaterIOS playQueue finish stopped=false
+## Experimental IOAudio2 bridge
+
+The bridge scripts support a separately configured research device. They are
+optional and are not required for standard AVAudioEngine or RemoteIO playback.
+The bridge expects these external files beside `ioaudio2_app_bridge.py`:
+
+- `inject_wav_ioaudio2.py`
+- `inject_wav_ioaudio2.js`
+- `set_media_volume.js`
+
+These dependencies are not included in this repository. The bridge validates
+its configuration before it opens an SSH connection. Configure it on the Mac:
+
+```sh
+export AUDIOREPEATER_PHONE_HOST=your-device-hostname
+export AUDIOREPEATER_SSH_KEY="$HOME/.ssh/your-device-key"
+export AUDIOREPEATER_PYTHON="$HOME/.venvs/your-frida-env/bin/python"
+python3 scripts/ioaudio2_app_bridge.py
 ```
+
+`AUDIOREPEATER_RUNS` overrides the run directory. The default is
+`~/.local/share/audiorepeater/ioaudio2-runs`. A run may contain audio, request
+metadata, and logs. Keep this directory private.
+
+`com.a2m.audiorepeater.ioaudio2bridge.plist.example` is a launchd template.
+Replace `__HOME__` and `__PHONE_HOST__`, adjust the virtual environment and
+bridge paths, and save the local file without `.example`. launchd does not
+expand these placeholders. The local file is ignored by Git.
+
+The `VolumeControl` test scheme changes hardware volume. Run it only when you
+intend to change the volume on the connected device.

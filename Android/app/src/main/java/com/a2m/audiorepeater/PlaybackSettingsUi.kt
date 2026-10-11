@@ -29,7 +29,7 @@ internal fun SettingsDivider(title: String) {
 internal fun PlaybackRadio(label: String, selected: Boolean, enabled: Boolean, onClick: () -> Unit) {
     Row(
         Modifier.selectable(selected, enabled = enabled, role = Role.RadioButton, onClick = onClick)
-            .padding(end = 8.dp).heightIn(min = 40.dp),
+            .padding(end = 4.dp).heightIn(min = 40.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         RadioButton(selected, onClick = null, enabled = enabled, modifier = Modifier.size(32.dp))
@@ -43,7 +43,7 @@ internal fun PlaybackBackendControls(
     selected: PlaybackBackend, rootAvailable: Boolean, rootChecking: Boolean, initSupported: Boolean,
     enabled: Boolean, onSelect: (PlaybackBackend) -> Unit, onCheckRoot: () -> Unit
 ) {
-    SettingsDivider("재생")
+    SettingsDivider("Playback")
     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).selectableGroup()) {
         PlaybackBackend.entries.filter { it != PlaybackBackend.ALSA_INIT || initSupported }.forEach { backend ->
             PlaybackRadio(backend.label, selected == backend,
@@ -52,11 +52,11 @@ internal fun PlaybackBackendControls(
     }
     if (!rootAvailable) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(if (rootChecking) "루트 권한 확인 중" else "ALSA(root): 앱 루트 권한 없음",
+            Text(if (rootChecking) "Checking root access" else "ALSA(root): root access unavailable",
                 style = MaterialTheme.typography.labelSmall)
             TextButton(onClick = onCheckRoot, enabled = enabled && !rootChecking,
                 contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp), modifier = Modifier.height(28.dp)) {
-                Text("다시 확인", style = MaterialTheme.typography.labelSmall)
+                Text("Check again", style = MaterialTheme.typography.labelSmall)
             }
         }
     }
@@ -71,7 +71,7 @@ internal fun PlaybackProcessingControls(
     var showDynamics by remember { mutableStateOf(false) }
     var showAttributes by remember { mutableStateOf(false) }
     val active = enabled && supportsProcessing
-    SettingsDivider("재생 효과")
+    SettingsDivider("Playback effects")
     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
         listOf(PlaybackEffect.EQUALIZER, PlaybackEffect.DYNAMICS).forEach { effect ->
             Checkbox(
@@ -82,13 +82,13 @@ internal fun PlaybackProcessingControls(
             )
             Text(effect.label, style = MaterialTheme.typography.labelMedium)
             TextButton(onClick = { if (effect == PlaybackEffect.EQUALIZER) showEq = true else showDynamics = true },
-                enabled = active, contentPadding = PaddingValues(horizontal = 6.dp)) { Text("설정") }
+                enabled = active, contentPadding = PaddingValues(horizontal = 6.dp)) { Text("Settings") }
         }
     }
     if (!supportsProcessing) {
-        Text("재생 효과·위치 설정은 AudioTrack에서 지원합니다.", style = MaterialTheme.typography.labelSmall)
+        Text("Effects and output selection require AudioTrack.", style = MaterialTheme.typography.labelSmall)
     }
-    SettingsDivider("재생 위치")
+    SettingsDivider("Playback output")
     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).selectableGroup()) {
         val communication = supportsProcessing && value.location != PlaybackLocation.DEFAULT
         PlaybackRadio("MODE_NORMAL", !communication, active) { onChange(value.copy(location = PlaybackLocation.DEFAULT)) }
@@ -98,11 +98,11 @@ internal fun PlaybackProcessingControls(
     }
     if (supportsProcessing && value.location != PlaybackLocation.DEFAULT) {
         Row(Modifier.fillMaxWidth().selectableGroup(), verticalAlignment = Alignment.CenterVertically) {
-            Text("출력", style = MaterialTheme.typography.labelMedium)
-            PlaybackRadio("수화부", value.location == PlaybackLocation.RECEIVER, active) {
+            Text("Output", style = MaterialTheme.typography.labelMedium)
+            PlaybackRadio("Receiver", value.location == PlaybackLocation.RECEIVER, active) {
                 onChange(value.copy(location = PlaybackLocation.RECEIVER))
             }
-            PlaybackRadio("스피커", value.location == PlaybackLocation.SPEAKER, active) {
+            PlaybackRadio("Speaker", value.location == PlaybackLocation.SPEAKER, active) {
                 onChange(value.copy(location = PlaybackLocation.SPEAKER))
             }
         }
@@ -136,17 +136,17 @@ private fun EqualizerSettingsDialog(value: PlaybackEffects, onDismiss: () -> Uni
             val levels = if (draft.eqPreset in caps.presets.indices) caps.presetLevels[draft.eqPreset]
                 else draft.eqLevelsMb.takeIf { it.size == caps.centersHz.size } ?: List(caps.centersHz.size) { 0 }
             draft = draft.copy(eqLevelsMb = levels)
-        }.onFailure { error = "이 기기에서 EQ를 열 수 없습니다: ${it.message}" }
+        }.onFailure { error = "Could not open EQ on this device: ${it.message}" }
     }
     AlertDialog(onDismissRequest = onDismiss, title = { Text("Equalizer") },
         text = {
             Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
-                Text("설정은 다음 재생부터 적용됩니다. 단위: dB", style = MaterialTheme.typography.bodySmall)
+                Text("Changes apply on the next playback. Unit: dB", style = MaterialTheme.typography.bodySmall)
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                 val caps = capabilities
-                if (caps == null && error == null) Text("기기 EQ 확인 중…")
+                if (caps == null && error == null) Text("Checking device EQ…")
                 if (caps != null) {
-                    ChoiceMenu("프리셋", listOf("사용자 설정" to -1) + caps.presets.mapIndexed { index, name -> name to index }, draft.eqPreset) { preset ->
+                    ChoiceMenu("Preset", listOf("Custom" to -1) + caps.presets.mapIndexed { index, name -> name to index }, draft.eqPreset) { preset ->
                         draft = draft.copy(eqPreset = preset, eqLevelsMb = if (preset >= 0) caps.presetLevels[preset] else draft.eqLevelsMb)
                     }
                     caps.centersHz.forEachIndexed { index, hz ->
@@ -159,8 +159,8 @@ private fun EqualizerSettingsDialog(value: PlaybackEffects, onDismiss: () -> Uni
                     }
                 }
             }
-        }, confirmButton = { TextButton(onClick = { onApply(draft) }, enabled = capabilities != null) { Text("적용") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } })
+        }, confirmButton = { TextButton(onClick = { onApply(draft) }, enabled = capabilities != null) { Text("Apply") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } })
 }
 
 @Composable
@@ -169,7 +169,7 @@ private fun DynamicsSettingsDialog(value: PlaybackEffects, onDismiss: () -> Unit
     AlertDialog(onDismissRequest = onDismiss, title = { Text("Dynamics Processing") },
         text = {
             Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
-                Text("모든 채널에 적용합니다. 설정은 다음 재생부터 적용됩니다.", style = MaterialTheme.typography.bodySmall)
+                Text("Applies to all channels on the next playback.", style = MaterialTheme.typography.bodySmall)
                 ParameterSlider("Input gain (dB)", draft.inputGainDb, -60f..24f) { draft = draft.copy(inputGainDb = it) }
                 ParameterSlider("Limiter threshold (dB)", draft.limiterThresholdDb, -60f..0f) { draft = draft.copy(limiterThresholdDb = it) }
                 ParameterSlider("Limiter post gain (dB)", draft.limiterPostGainDb, -60f..24f) { draft = draft.copy(limiterPostGainDb = it) }
@@ -187,10 +187,10 @@ private fun DynamicsSettingsDialog(value: PlaybackEffects, onDismiss: () -> Unit
                     ParameterSlider("Attack (ms)", band.attackMs, 0.1f..100f) { update(band.copy(attackMs = it)) }
                     ParameterSlider("Release (ms)", band.releaseMs, 1f..1000f) { update(band.copy(releaseMs = it)) }
                 }
-                Text("샘플레이트가 낮으면 밴드 주파수를 Nyquist 주파수 이하로 제한합니다.", style = MaterialTheme.typography.bodySmall)
+                Text("At lower sample rates, band frequencies are limited to the Nyquist frequency.", style = MaterialTheme.typography.bodySmall)
             }
-        }, confirmButton = { TextButton(onClick = { onApply(draft) }) { Text("적용") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } })
+        }, confirmButton = { TextButton(onClick = { onApply(draft) }) { Text("Apply") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } })
 }
 
 @Composable
@@ -213,20 +213,20 @@ private val contentChoices = listOf("Music" to AudioAttributes.CONTENT_TYPE_MUSI
 @Composable
 private fun AttributesDialog(value: PlaybackProcessing, onDismiss: () -> Unit, onApply: (PlaybackProcessing) -> Unit) {
     var draft by remember { mutableStateOf(value) }
-    AlertDialog(onDismissRequest = onDismiss, title = { Text("오디오 속성") }, text = {
+    AlertDialog(onDismissRequest = onDismiss, title = { Text("Audio attributes") }, text = {
         Column {
             ChoiceMenu("Usage", usageChoices, draft.usage) { draft = draft.copy(usage = it) }
             ChoiceMenu("ContentType", contentChoices, draft.contentType) { draft = draft.copy(contentType = it) }
         }
-    }, confirmButton = { TextButton(onClick = { onApply(draft) }) { Text("적용") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } })
+    }, confirmButton = { TextButton(onClick = { onApply(draft) }) { Text("Apply") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } })
 }
 
 @Composable
 private fun ChoiceMenu(label: String, options: List<Pair<String, Int>>, selected: Int, onSelect: (Int) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
     Box {
-        TextButton(onClick = { expanded = true }) { Text("$label: ${options.firstOrNull { it.second == selected }?.first ?: "사용자 설정"}") }
+        TextButton(onClick = { expanded = true }) { Text("$label: ${options.firstOrNull { it.second == selected }?.first ?: "Custom"}") }
         DropdownMenu(expanded, onDismissRequest = { expanded = false }, modifier = Modifier.heightIn(max = 320.dp)) {
             options.forEach { (name, key) -> DropdownMenuItem(text = { Text(name) }, onClick = { onSelect(key); expanded = false }) }
         }

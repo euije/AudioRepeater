@@ -155,7 +155,7 @@ internal class UnprocessedMicRecorder private constructor(
         fun create(context: Context): UnprocessedMicRecorder {
             if (context.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) !=
                 android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                throw SecurityException("마이크 녹음 권한이 필요합니다.")
+                throw SecurityException("Microphone permission is required to record audio.")
             }
             val minBufferSize = AudioRecord.getMinBufferSize(
                 RECORDING_SAMPLE_RATE,

@@ -27,11 +27,11 @@ enum PlaybackState: Equatable {
     var statusText: String {
         switch self {
         case .idle:
-            return "대기"
+            return "Idle"
         case let .preparing(message):
             return message
         case let .playing(_, displayName, currentRepeat, totalRepeats):
-            return "\(displayName) · \(currentRepeat)/\(totalRepeats)회"
+            return "\(displayName) · \(currentRepeat)/\(totalRepeats)"
         }
     }
 }
@@ -1183,17 +1183,17 @@ enum AudioQueueError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .bufferAllocationFailed:
-            return "오디오 버퍼를 만들 수 없습니다."
+            return "Could not create an audio buffer."
         case .conversionFailed:
-            return "오디오 형식을 변환할 수 없습니다."
+            return "Could not convert the audio format."
         case .audioSessionUnavailable:
-            return "오디오 세션을 준비할 수 없습니다."
+            return "Could not prepare the audio session."
         case .audioEngineUnavailable:
-            return "오디오 엔진을 시작할 수 없습니다."
+            return "Could not start the audio engine."
         case .screenCaptureUnavailable:
-            return "이 iOS 버전에서는 ScreenCaptureKit 오디오 캡처를 사용할 수 없습니다."
+            return "ScreenCaptureKit audio capture is unavailable on this iOS version."
         case let .unexpectedOutputRoute(route):
-            return "내장 스피커가 아닌 출력 경로가 선택되었습니다: \(route)"
+            return "The selected output is not the built-in speaker: \(route)"
         }
     }
 }

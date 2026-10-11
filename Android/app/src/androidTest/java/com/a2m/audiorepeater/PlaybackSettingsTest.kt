@@ -3,6 +3,7 @@ package com.a2m.audiorepeater
 import android.graphics.Bitmap
 import android.content.Context
 import android.content.ContextWrapper
+import android.content.Intent
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
@@ -27,6 +28,13 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class PlaybackSettingsTest {
     @get:Rule val compose = createComposeRule()
+
+    @Test fun releasePolicyIgnoresExternalDebugPlaybackArguments() {
+        val request = Intent().putExtra("debugAudioPath", "/data/local/tmp/test.wav")
+            .putExtra("debugUseDirectAlsaInitHijack", true)
+        assertNull(DebugAudioConfig.from(request, debugBuild = false))
+        assertTrue(checkNotNull(DebugAudioConfig.from(request, debugBuild = true)).useDirectAlsaInitHijack)
+    }
 
     @Test fun unsupportedInitIsHiddenAndUnrootedAlsaIsDisabled() {
         val backend = mutableStateOf(PlaybackBackend.AUDIO_TRACK)
@@ -67,17 +75,17 @@ class PlaybackSettingsTest {
             AudioRepeaterApp(DebugAudioConfig(emptyList(), 1, "0", "0", false, false, false,
                 false, false, null, false, false))
         } } }
-        val playback = compose.onAllNodesWithText("재생")[0].fetchSemanticsNode().boundsInRoot.top
-        val effects = compose.onNodeWithText("재생 효과").fetchSemanticsNode().boundsInRoot.top
-        val location = compose.onNodeWithText("재생 위치").fetchSemanticsNode().boundsInRoot.top
-        val recording = compose.onNodeWithText("녹음").fetchSemanticsNode().boundsInRoot.top
+        val playback = compose.onAllNodesWithText("Playback")[0].fetchSemanticsNode().boundsInRoot.top
+        val effects = compose.onNodeWithText("Playback effects").fetchSemanticsNode().boundsInRoot.top
+        val location = compose.onNodeWithText("Playback output").fetchSemanticsNode().boundsInRoot.top
+        val recording = compose.onNodeWithText("Recording").fetchSemanticsNode().boundsInRoot.top
         assertTrue(playback < effects && effects < location && location < recording)
-        compose.onNodeWithText("마이크 동시 녹음 (UNPROCESSED)").assertIsDisplayed()
-        val repeatY = compose.onNodeWithText("기본 반복").fetchSemanticsNode().boundsInRoot.center.y
-        compose.onNodeWithText("파일 간 딜레이(초)").performScrollTo().assertIsDisplayed()
-        val delayY = compose.onNodeWithText("파일 간 딜레이(초)").fetchSemanticsNode().boundsInRoot.center.y
+        compose.onNodeWithText("Record microphone (UNPROCESSED)").assertIsDisplayed()
+        val repeatY = compose.onNodeWithText("Default repeats").fetchSemanticsNode().boundsInRoot.center.y
+        compose.onNodeWithText("File delay (s)").performScrollTo().assertIsDisplayed()
+        val delayY = compose.onNodeWithText("File delay (s)").fetchSemanticsNode().boundsInRoot.center.y
         assertEquals(repeatY, delayY, 2f)
-        compose.onNodeWithText("기본 반복").performScrollTo()
+        compose.onNodeWithText("Default repeats").performScrollTo()
         val screenshot = instrumentation.uiAutomation.takeScreenshot()
         File(instrumentation.targetContext.getExternalFilesDir(null), "playback-settings-test.png").outputStream().use {
             screenshot.compress(Bitmap.CompressFormat.PNG, 100, it)
@@ -112,7 +120,7 @@ class PlaybackSettingsTest {
     }
 
     @Test fun communicationRoutesSilentAudioAndRestoresMode() {
-        compose.setContent { AudioRepeaterTheme { androidx.compose.material3.Text("무음 라우팅 검증") } }
+        compose.setContent { AudioRepeaterTheme { androidx.compose.material3.Text("Silent routing test") } }
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val manager = context.getSystemService(AudioManager::class.java)
         val originalMode = manager.mode
@@ -129,7 +137,7 @@ class PlaybackSettingsTest {
                     track.play()
                     val silence = ByteArray(16384)
                     assertEquals(silence.size, track.write(silence, 0, silence.size))
-                    assertEquals(if (location == PlaybackLocation.RECEIVER) "수화부" else "스피커",
+                    assertEquals(if (location == PlaybackLocation.RECEIVER) "Receiver" else "Speaker",
                         routing.verify({ track.routedDevice }, { false }))
                 } finally { track.release() }
             } finally { routing.close() }

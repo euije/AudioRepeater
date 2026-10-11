@@ -251,15 +251,15 @@ enum RemotePlaybackRequestError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .emptyFileList:
-            return "원격 재생 파일 목록이 비어 있습니다."
+            return "The remote playback file list is empty."
         case .invalidDelay:
-            return "원격 재생 딜레이 값이 올바르지 않습니다."
+            return "Invalid remote playback delay."
         case .invalidPan:
-            return "AVAudioEngine pan 값은 -1...1 범위여야 합니다."
+            return "AVAudioEngine pan must be between -1 and 1."
         case .invalidGain:
             return "AVAudioEngine gain must be in 0.01...1."
         case .invalidAudioSessionMode:
-            return "지원하지 않는 AVAudioSession mode입니다."
+            return "Unsupported AVAudioSession mode."
         case .invalidEQ:
             return "Invalid AVAudioEngine EQ values."
         case .invalidCompletionCallback:
@@ -271,11 +271,11 @@ enum RemotePlaybackRequestError: LocalizedError {
         case .invalidIOBufferDuration:
             return "Invalid preferred IO buffer duration."
         case let .invalidRepeatCount(fileName):
-            return "반복 횟수가 올바르지 않습니다: \(fileName)"
+            return "Invalid repeat count: \(fileName)"
         case let .invalidFileName(fileName):
-            return "안전하지 않은 WAV 파일명입니다: \(fileName)"
+            return "Unsafe WAV file name: \(fileName)"
         case let .missingFile(fileName):
-            return "전송된 WAV 파일을 찾을 수 없습니다: \(fileName)"
+            return "Transferred WAV file not found: \(fileName)"
         }
     }
 }

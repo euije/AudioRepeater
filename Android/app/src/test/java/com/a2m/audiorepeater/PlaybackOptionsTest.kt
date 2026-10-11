@@ -6,6 +6,8 @@ import org.junit.Test
 class PlaybackOptionsTest {
     @Test fun initRequiresTheVerifiedDeviceBuildAndKernel() {
         assertTrue(supportsInitAlsa("flame", 33, PIXEL4_INIT_FINGERPRINT, "4.14.276-g6ef255005cea"))
+        assertTrue(supportsInitAlsa("flame", 33, PIXEL4_INIT_FINGERPRINT, "4.14.276-g6ef255005cea-ab9062920"))
+        assertFalse(supportsInitAlsa("flame", 33, PIXEL4_INIT_FINGERPRINT, "4.14.276-g6ef255005cea-custom"))
         assertFalse(supportsInitAlsa("coral", 33, PIXEL4_INIT_FINGERPRINT, "4.14.276-g6ef255005cea"))
         assertFalse(supportsInitAlsa("flame", 34, PIXEL4_INIT_FINGERPRINT, "4.14.276-g6ef255005cea"))
         assertFalse(supportsInitAlsa("flame", 33, PIXEL4_INIT_FINGERPRINT.replace("B2", "B3"), "4.14.276-g6ef255005cea"))

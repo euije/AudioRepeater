@@ -59,9 +59,14 @@ param(
 
     [string]$CaptureOutputPath,
 
-    [string]$MacHost = "macbook",
-    [string]$MacDeveloperDir = "/Applications/Xcode-beta.app/Contents/Developer",
-    [string]$DeviceId = "YOUR_DEVICE_UDID",
+    [Parameter(Mandatory = $true)]
+    [ValidatePattern("^[A-Za-z0-9][A-Za-z0-9_.@:-]*$")]
+    [string]$MacHost,
+    [string]$MacDeveloperDir = "",
+    [Parameter(Mandatory = $true)]
+    [ValidatePattern("^[A-Za-z0-9-]+$")]
+    [string]$DeviceId,
+    [ValidatePattern("^[A-Za-z0-9_.-]+$")]
     [string]$BundleId = "com.a2m.audiorepeater.ios",
 
     [ValidateRange(10, 86400)]
@@ -74,6 +79,10 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+if ($MacDeveloperDir -match "['`r`n]") {
+    throw "MacDeveloperDir must not contain quotes or line breaks."
+}
 
 $resolvedFiles = @(foreach ($path in $WavPath) {
     $file = Get-Item -LiteralPath $path -ErrorAction Stop

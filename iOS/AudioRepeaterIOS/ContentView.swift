@@ -62,8 +62,8 @@ struct ContentView: View {
                 allowsMultipleSelection: true,
                 onCompletion: handleImportResult
             )
-            .alert("알림", isPresented: alertBinding) {
-                Button("확인", role: .cancel) {
+            .alert("Notice", isPresented: alertBinding) {
+                Button("OK", role: .cancel) {
                     alertMessage = nil
                 }
             } message: {
@@ -283,7 +283,7 @@ struct ContentView: View {
         VStack(spacing: 12) {
             HStack(spacing: 12) {
                 labeledTextField(
-                    title: "기본 반복",
+                    title: "Default repeats",
                     text: $defaultRepeatText,
                     keyboardType: .numberPad,
                     sanitize: sanitizeRepeatInput
@@ -292,7 +292,7 @@ struct ContentView: View {
                 Button {
                     isImporterPresented = true
                 } label: {
-                    Label(isImporting ? "추가 중" : "여러개 추가", systemImage: "plus")
+                    Label(isImporting ? "Adding" : "Add files", systemImage: "plus")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
@@ -304,7 +304,7 @@ struct ContentView: View {
                     items[index].repeatText = defaultRepeatText
                 }
             } label: {
-                Label("전체 반복 적용", systemImage: "checkmark.circle")
+                Label("Apply repeats to all", systemImage: "checkmark.circle")
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.bordered)
@@ -312,14 +312,14 @@ struct ContentView: View {
 
             HStack(spacing: 12) {
                 labeledTextField(
-                    title: "같은 파일 딜레이(초)",
+                    title: "Repeat delay (s)",
                     text: $sameFileDelayText,
                     keyboardType: .decimalPad,
                     sanitize: sanitizeDelayInput
                 )
 
                 labeledTextField(
-                    title: "파일 간 딜레이(초)",
+                    title: "File delay (s)",
                     text: $differentFileDelayText,
                     keyboardType: .decimalPad,
                     sanitize: sanitizeDelayInput
@@ -332,8 +332,8 @@ struct ContentView: View {
                         .font(.subheadline.weight(.semibold))
                     Text(
                         ioAudio2RingOverwriteEnabled
-                            ? "사용 · c0004 최적화 조건"
-                            : "사용 안 함 · AVAudioEngine"
+                            ? "Enabled · c0004 optimized settings"
+                            : "Disabled · AVAudioEngine"
                     )
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -381,8 +381,8 @@ struct ContentView: View {
                 } label: {
                     Label(
                         ioAudio2RingOverwriteEnabled
-                            ? "IOAudio2 재생"
-                            : "일반 재생",
+                            ? "IOAudio2 playback"
+                            : "Standard playback",
                         systemImage: "play.fill"
                     )
                     .frame(maxWidth: .infinity)
@@ -399,7 +399,7 @@ struct ContentView: View {
                         player.stop()
                     }
                 } label: {
-                    Label("정지", systemImage: "stop.fill")
+                    Label("Stop", systemImage: "stop.fill")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.bordered)
@@ -412,7 +412,7 @@ struct ContentView: View {
 
     private var listContent: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("목록 (\(enabledItems.count)/\(items.count) 활성)")
+            Text("Queue (\(enabledItems.count)/\(items.count) enabled)")
                 .font(.headline)
 
             if items.isEmpty {
@@ -420,7 +420,7 @@ struct ContentView: View {
                     Image(systemName: "music.note")
                         .font(.largeTitle)
                         .foregroundStyle(.secondary)
-                    Text("wav 파일 없음")
+                    Text("No WAV files")
                         .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -479,11 +479,11 @@ struct ContentView: View {
                 items.append(contentsOf: importResult.items)
 
                 if importResult.items.isEmpty {
-                    alertMessage = "추가된 wav 파일이 없습니다."
+                    alertMessage = "No WAV files were added."
                 } else if importResult.skippedCount > 0 {
-                    alertMessage = "\(importResult.items.count)개 추가, \(importResult.skippedCount)개 건너뜀"
+                    alertMessage = "Added \(importResult.items.count); skipped \(importResult.skippedCount)"
                 } else {
-                    alertMessage = "\(importResult.items.count)개 추가됨"
+                    alertMessage = "Added \(importResult.items.count) files"
                 }
             } catch {
                 alertMessage = error.localizedDescription
@@ -595,7 +595,7 @@ private struct AudioItemRow: View {
             .buttonStyle(.borderless)
             .disabled(isPlaying)
             .accessibilityLabel(
-                item.isEnabled ? "아이템 비활성화" : "아이템 활성화"
+                item.isEnabled ? "Disable item" : "Enable item"
             )
 
             Image(systemName: isCurrent ? "waveform" : "music.note")
@@ -619,7 +619,7 @@ private struct AudioItemRow: View {
                     HStack(spacing: 8) {
                         Text(
                             "\(playbackProgress.current) / " +
-                                "\(playbackProgress.total)회 재생 중"
+                                "\(playbackProgress.total) repeats"
                         )
                         .font(.caption.weight(.bold))
                         .foregroundStyle(.orange)
@@ -634,7 +634,7 @@ private struct AudioItemRow: View {
 
             Spacer()
 
-            TextField("횟수", text: $item.repeatText)
+            TextField("Repeats", text: $item.repeatText)
                 .keyboardType(.numberPad)
                 .textFieldStyle(.roundedBorder)
                 .frame(width: 76)
@@ -752,7 +752,7 @@ private final class IOAudio2BridgeController: ObservableObject {
                 requestID,
                 forKey: activeRequestDefaultsKey
             )
-            state = .preparing(message: "IOAudio2 브리지 연결 중")
+            state = .preparing(message: "Connecting to the IOAudio2 bridge")
             startMonitoring(requestID: requestID)
         } catch {
             fail(error.localizedDescription)
@@ -775,7 +775,7 @@ private final class IOAudio2BridgeController: ObservableObject {
                 to: bridgeURLs().cancel,
                 options: .atomic
             )
-            state = .preparing(message: "IOAudio2 재생 정지 중")
+            state = .preparing(message: "Stopping IOAudio2 playback")
         } catch {
             fail(error.localizedDescription)
         }
@@ -790,7 +790,7 @@ private final class IOAudio2BridgeController: ObservableObject {
             return
         }
         activeRequestID = requestID
-        state = .preparing(message: "IOAudio2 재생 상태 복원 중")
+        state = .preparing(message: "Restoring IOAudio2 playback status")
         startMonitoring(requestID: requestID)
     }
 
@@ -812,8 +812,8 @@ private final class IOAudio2BridgeController: ObservableObject {
                     emptyPollCount += 1
                     if emptyPollCount >= 150 {
                         fail(
-                            "Mac IOAudio2 브리지가 응답하지 않습니다. " +
-                                "Mac과 iPhone 연결을 확인해 주세요."
+                            "The Mac IOAudio2 bridge is not responding. " +
+                                "Check the connection between the Mac and iPhone."
                         )
                         return
                     }
@@ -855,7 +855,7 @@ private final class IOAudio2BridgeController: ObservableObject {
         switch status.state {
         case "accepted":
             state = .preparing(
-                message: status.message ?? "IOAudio2 ring 준비 중"
+                message: status.message ?? "Preparing the IOAudio2 ring"
             )
             return false
         case "playing":
@@ -893,7 +893,7 @@ private final class IOAudio2BridgeController: ObservableObject {
             finish()
             return true
         case "error":
-            fail(status.message ?? "IOAudio2 재생 중 오류가 발생했습니다.")
+            fail(status.message ?? "IOAudio2 playback failed.")
             return true
         default:
             return false
@@ -1005,7 +1005,7 @@ private enum IOAudio2BridgeError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case let .missingWAV(fileName):
-            return "IOAudio2 재생용 WAV 파일이 없습니다: \(fileName)"
+            return "WAV file not found for IOAudio2 playback: \(fileName)"
         }
     }
 }
