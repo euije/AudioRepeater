@@ -1216,6 +1216,9 @@ private data class RootAlsaProfile(
         val expectedDeviceValue = shellQuote(expectedDevice)
         val expectedNodeValue = shellQuote(pcmNode)
         val pcmPidFileValue = shellQuote(pcmPidFile)
+        // Pixel10 must enter SCHED_RR before its first mmap write. Host-side
+        // log polling can arrive after an underrun during the silent lead.
+        val playbackPrefix = if (usesMmap) "chrt -r 10 " else ""
         return """
             set -u
             helper=$helper
@@ -1313,7 +1316,7 @@ private data class RootAlsaProfile(
               *On*) ;;
               *) echo "A2M_ALSA_ROUTE_ENABLE_FAILED"; exit 24 ;;
             esac
-            "${'$'}helper" "${'$'}input" $playbackArguments \
+            $playbackPrefix"${'$'}helper" "${'$'}input" $playbackArguments \
               >"${'$'}helper_output" 2>&1 &
             pcm_pid=${'$'}!
             echo "${'$'}pcm_pid" >"${'$'}pcm_pid_file"

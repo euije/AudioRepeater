@@ -246,6 +246,14 @@ repeated waveforms in continuous-packet tests. With the same helper and source
 bytes, 512-by-4 passed the fixed-pilot checks during initial capture, one
 training round, and an 18-input validation session on the tested SDK 37 device.
 
+The Pixel10 root command starts the helper with `chrt -r 10` so SCHED_RR
+priority 10 applies before the first mmap write. Setting this policy from a
+host log observer left an unprotected startup interval: c0175's G128 initial
+capture failed with mmap errno32 during that interval. The app then deleted
+the temporary aggregate, and the host reported a secondary hard-link error.
+Other profiles retain their existing launch command. The helper binary,
+512-by-4 periods, and source samples are unchanged.
+
 This profile accepts 48 kHz integer PCM16/24/32 mono or stereo WAVs. The helper
 widens samples to S32_LE exactly and duplicates mono into identical left/right
 channels. Stereo channels retain their individual samples. It does not change
