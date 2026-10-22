@@ -240,6 +240,12 @@ executable built from `app/src/main/cpp/pixel10_mmap`; it loads the device's
 `/system/lib64/libtinyalsa.so`. The app extracts it into its private files
 directory and checks its SHA-256 against the packaged asset before root execution.
 
+The Pixel 10 profile uses 512 frames per period and four periods, for a
+2048-frame buffer. The previous 480-by-4 setting produced discontinuous
+repeated waveforms in continuous-packet tests. With the same helper and source
+bytes, 512-by-4 passed the fixed-pilot checks during initial capture, one
+training round, and an 18-input validation session on the tested SDK 37 device.
+
 This profile accepts 48 kHz integer PCM16/24/32 mono or stereo WAVs. The helper
 widens samples to S32_LE exactly and duplicates mono into identical left/right
 channels. Stereo channels retain their individual samples. It does not change

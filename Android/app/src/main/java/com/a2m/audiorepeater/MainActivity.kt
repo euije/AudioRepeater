@@ -1549,7 +1549,7 @@ private data class RootAlsaProfile(
                         card = 0,
                         pcmDevice = 1,
                         pcmNode = "/dev/snd/pcmC0D1p",
-                        periodSize = 480,
+                        periodSize = 512,
                         periodCount = 4,
                         tinymixPath = "/data/local/tmp/a2m_tinyalsa/tinymix",
                         routeQueryCommand =
