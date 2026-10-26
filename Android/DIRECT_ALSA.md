@@ -20,6 +20,27 @@ without playing through a different path.
 
 ## Playback settings
 
+Debug builds export the app's current playback profiles and EQ capabilities for
+local controllers. This query does not load a playlist or start playback:
+
+```text
+adb -s DEVICE_SERIAL shell am start -f 0x10008000 -n com.a2m.audiorepeater/.MainActivity --ez debugExportPlayback true
+adb -s DEVICE_SERIAL shell run-as com.a2m.audiorepeater cat files/playback-capabilities.json
+```
+
+The export reports root availability, supported init playback, ALSA profile IDs,
+PCM periods, helper hashes, route commands, media volume range, and device EQ
+bands and presets. It also checks AAudio EXCLUSIVE by opening and closing an
+unstarted 48 kHz mono stream. It uses the same `RootAlsaProfile`, AAudio code,
+and effect queries as the app. Controllers must refresh the export after an
+app or firmware update.
+
+ADB autoplay accepts `--es debugPlaybackProcessing JSON`. The JSON has
+`location`, `usage`, `contentType`, and `effects`, as shown by
+`default_processing` in the export. The app validates these values and passes
+them to the same playback code as the UI. `A2M_PLAYBACK_SETTINGS` logs the actual
+backend and processing request. Release builds ignore both debug controls.
+
 The screen groups controls under `Playback`, `Playback effects`, `Playback output`, and `Recording`.
 The repeat count, multiple-file import, apply button, and both delay fields
 share a horizontally scrollable row.

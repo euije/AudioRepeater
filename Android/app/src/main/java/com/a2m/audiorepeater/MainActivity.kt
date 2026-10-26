@@ -113,6 +113,13 @@ import kotlinx.coroutines.withContext
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (BuildConfig.DEBUG && intent.getBooleanExtra("debugExportPlayback", false)) {
+            Thread {
+                exportPlaybackCapabilities(applicationContext)
+                runOnUiThread { finish() }
+            }.start()
+            return
+        }
         val debugAudioConfig = if (BuildConfig.DEBUG) {
             DebugAudioConfig.from(intent) ?: applicationContext.loadPersistedDebugAudioConfig()
         } else null
@@ -353,6 +360,7 @@ internal fun AudioRepeaterApp(debugAudioConfig: DebugAudioConfig? = null) {
             activeConfig.useDirectAlsaInitHijack, activeConfig.useAaudioExclusive)
         selectedBackend = availableBackend(requestedBackend, rootAvailable, initSupported)
         recordUnprocessed = activeConfig.recordUnprocessed
+        processing = activeConfig.processing.forBackend(selectedBackend)
         playbackPathStatus = selectedPlaybackPathStatus(
             selectedBackend == PlaybackBackend.ALSA_ROOT,
             selectedBackend == PlaybackBackend.AAUDIO,
@@ -382,7 +390,8 @@ internal fun AudioRepeaterApp(debugAudioConfig: DebugAudioConfig? = null) {
                     useLowLatencyAudioTrack = activeConfig.useLowLatencyAudioTrack,
                     forceStereoRouteAssist = activeConfig.forceStereoRouteAssist,
                     directAlsaPcmDevice = activeConfig.directAlsaPcmDevice,
-                    recordUnprocessed = activeConfig.recordUnprocessed
+                    recordUnprocessed = activeConfig.recordUnprocessed,
+                    processing = activeConfig.processing
                 )
             )
         } else {
@@ -857,7 +866,8 @@ internal data class DebugAudioConfig(
     val forceStereoRouteAssist: Boolean,
     val directAlsaPcmDevice: Int?,
     val recordUnprocessed: Boolean,
-    val autoPlayOnLoad: Boolean
+    val autoPlayOnLoad: Boolean,
+    val processing: PlaybackProcessing = PlaybackProcessing()
 ) {
     companion object {
         fun from(intent: Intent, debugBuild: Boolean = BuildConfig.DEBUG): DebugAudioConfig? {
@@ -886,7 +896,8 @@ internal data class DebugAudioConfig(
                 },
                 recordUnprocessed =
                     intent.getBooleanExtra(DEBUG_RECORD_UNPROCESSED_EXTRA, false),
-                autoPlayOnLoad = true
+                autoPlayOnLoad = true,
+                processing = parseDebugProcessing(intent.getStringExtra("debugPlaybackProcessing"))
             )
         }
     }
@@ -1058,6 +1069,14 @@ private sealed interface RecordingUiState {
     data class Failed(val message: String) : RecordingUiState
 }
 
+internal fun debugAaudioCapability(): org.json.JSONObject = runCatching {
+    val stream = NativeAaudioStream.open(48000, 1)
+    try {
+        org.json.JSONObject().put("available", true).put("sample_rate", stream.info.sampleRate)
+            .put("sharing", stream.info.sharingModeLabel)
+    } finally { stream.close() }
+}.getOrElse { org.json.JSONObject().put("available", false).put("reason", it.message) }
+
 private data class AaudioStreamInfo(
     val sharingMode: Int,
     val performanceMode: Int,
@@ -1185,7 +1204,7 @@ private class NativeAaudioStream private constructor() {
     }
 }
 
-private data class RootAlsaProfile(
+internal data class RootAlsaProfile(
     val label: String,
     val expectedDevice: String,
     val card: Int,
@@ -1991,6 +2010,7 @@ private class AudioQueuePlayer(
             if (useDirectAlsa) check(hasRootAccess()) { "Grant root access to the app to use ALSA(root)." }
             if (useDirectAlsaInitHijack) check(deviceSupportsInitAlsa()) { "ALSA(init) does not support this device and build." }
             activeProcessing = processing
+            Log.i(LOG_TAG, "A2M_PLAYBACK_SETTINGS backend=${backend.name} processing=${debugProcessingJson(processing)}")
             if (backend == PlaybackBackend.AUDIO_TRACK) {
                 activeRouting = PlaybackRouting(context, processing.location).also { it.apply() }
             }
@@ -2336,6 +2356,7 @@ private class AudioQueuePlayer(
         )
         currentAaudioStream = stream
         val info = stream.info
+        Log.i(LOG_TAG, "AAudio stream start file=${item.displayName} repeats=${item.repeatCount}")
 
         try {
             postPathStatus(
