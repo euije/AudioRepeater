@@ -16,6 +16,11 @@
 		000000000000000000000017 /* RemoteIOPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000028 /* RemoteIOPlayer.swift */; };
 		000000000000000000000018 /* ScreenCaptureAudioRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000029 /* ScreenCaptureAudioRecorder.swift */; };
 		000000000000000000000050 /* VolumeButtonUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000051 /* VolumeButtonUITests.swift */; };
+		000000000000000000000061 /* PlaybackSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000071 /* PlaybackSettings.swift */; };
+		000000000000000000000062 /* PlaybackEffects.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000072 /* PlaybackEffects.swift */; };
+		000000000000000000000063 /* LibraryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000073 /* LibraryStore.swift */; };
+		000000000000000000000064 /* PlaybackSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000074 /* PlaybackSettingsView.swift */; };
+		000000000000000000000065 /* PlaybackUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000075 /* PlaybackUITests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -41,6 +46,11 @@
 		000000000000000000000029 /* ScreenCaptureAudioRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenCaptureAudioRecorder.swift; sourceTree = "<group>"; };
 		000000000000000000000051 /* VolumeButtonUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VolumeButtonUITests.swift; sourceTree = "<group>"; };
 		000000000000000000000052 /* AudioRepeaterVolumeUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AudioRepeaterVolumeUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		000000000000000000000071 /* PlaybackSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackSettings.swift; sourceTree = "<group>"; };
+		000000000000000000000072 /* PlaybackEffects.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackEffects.swift; sourceTree = "<group>"; };
+		000000000000000000000073 /* LibraryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryStore.swift; sourceTree = "<group>"; };
+		000000000000000000000074 /* PlaybackSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackSettingsView.swift; sourceTree = "<group>"; };
+		000000000000000000000075 /* PlaybackUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackUITests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -90,6 +100,10 @@
 				000000000000000000000027 /* RemotePlaybackRequest.swift */,
 				000000000000000000000028 /* RemoteIOPlayer.swift */,
 				000000000000000000000029 /* ScreenCaptureAudioRecorder.swift */,
+				000000000000000000000074 /* PlaybackSettingsView.swift */,
+				000000000000000000000073 /* LibraryStore.swift */,
+				000000000000000000000072 /* PlaybackEffects.swift */,
+				000000000000000000000071 /* PlaybackSettings.swift */,
 				000000000000000000000026 /* Info.plist */,
 			);
 			path = AudioRepeaterIOS;
@@ -99,6 +113,7 @@
 			isa = PBXGroup;
 			children = (
 				000000000000000000000051 /* VolumeButtonUITests.swift */,
+				000000000000000000000075 /* PlaybackUITests.swift */,
 			);
 			path = AudioRepeaterVolumeUITests;
 			sourceTree = "<group>";
@@ -211,6 +226,10 @@
 				000000000000000000000016 /* RemotePlaybackRequest.swift in Sources */,
 				000000000000000000000017 /* RemoteIOPlayer.swift in Sources */,
 				000000000000000000000018 /* ScreenCaptureAudioRecorder.swift in Sources */,
+				000000000000000000000064 /* PlaybackSettingsView.swift in Sources */,
+				000000000000000000000063 /* LibraryStore.swift in Sources */,
+				000000000000000000000062 /* PlaybackEffects.swift in Sources */,
+				000000000000000000000061 /* PlaybackSettings.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -219,6 +238,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				000000000000000000000050 /* VolumeButtonUITests.swift in Sources */,
+				000000000000000000000065 /* PlaybackUITests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -353,12 +373,15 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_ASSET_PATHS = "";
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = AudioRepeater;
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Record microphone audio alongside the selected WAV playback.";
+				INFOPLIST_KEY_UIFileSharingEnabled = YES;
+				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
 				INFOPLIST_KEY_NSScreenCaptureUsageDescription = "Capture the app audio stream for controlled playback-path measurements.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -369,7 +392,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.a2m.audiorepeater.ios;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -387,12 +410,15 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_ASSET_PATHS = "";
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = AudioRepeater;
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Record microphone audio alongside the selected WAV playback.";
+				INFOPLIST_KEY_UIFileSharingEnabled = YES;
+				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
 				INFOPLIST_KEY_NSScreenCaptureUsageDescription = "Capture the app audio stream for controlled playback-path measurements.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -403,7 +429,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.a2m.audiorepeater.ios;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -423,7 +449,7 @@
 				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.a2m.audiorepeater.ios.volumetests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -441,7 +467,7 @@
 				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.a2m.audiorepeater.ios.volumetests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;

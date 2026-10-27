@@ -70,9 +70,9 @@ enum ImportManager {
     }
 
     private static func audioCacheDirectory() throws -> URL {
-        let cacheURL = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-        let directory = cacheURL.appendingPathComponent("selected-wav", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let store = LibraryStore()
+        let directory = store.importsDirectory
+        try store.prepareDirectory(directory)
         return directory
     }
 }

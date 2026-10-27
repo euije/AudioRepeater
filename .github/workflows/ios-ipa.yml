@@ -67,6 +67,18 @@ jobs:
             CODE_SIGN_IDENTITY= DEVELOPMENT_TEAM= \
             2>&1 | tee build/logs/xcodebuild.log
 
+      - name: Verify settings, persistence, remote requests, and rendered effects
+        run: |
+          set -euo pipefail
+          xcrun swiftc -swift-version 5 \
+            iOS/AudioRepeaterIOS/AudioItem.swift \
+            iOS/AudioRepeaterIOS/PlaybackSettings.swift \
+            iOS/AudioRepeaterIOS/LibraryStore.swift \
+            iOS/AudioRepeaterIOS/RemotePlaybackRequest.swift \
+            iOS/AudioRepeaterIOS/PlaybackEffects.swift \
+            iOS/tests/PlaybackTests.swift -o build/playback-tests
+          build/playback-tests 2>&1 | tee build/logs/playback-tests.log
+
       - name: Verify app and package IPA
         run: |
           set -euo pipefail
@@ -124,6 +136,51 @@ jobs:
           retention-days: 14
           compression-level: 0
 
+      - name: Test iOS playback and settings in the simulator
+        run: |
+          set -euo pipefail
+          xcrun simctl list devices available --json > build/simulators.json
+          simulator="$(python3 - <<'PY'
+          import json
+          devices = [d for ds in json.load(open('build/simulators.json'))['devices'].values()
+                     for d in ds if d.get('isAvailable') and d['name'].startswith('iPhone')]
+          assert devices, 'No available iPhone simulator in the Xcode 27 image'
+          devices.sort(key=lambda d: (d['name'] != 'iPhone 15', d['name']))
+          print(devices[0]['udid'])
+          PY
+          )"
+          echo "SIMULATOR_ID=$simulator" >> "$GITHUB_ENV"
+          xcrun simctl boot "$simulator" || true
+          xcrun simctl bootstatus "$simulator" -b
+          # Select only PlaybackUITests. Never run the hardware volume tests.
+          xcodebuild test -project "$PROJECT" -scheme VolumeControl \
+            -configuration Debug -destination "id=$simulator" \
+            -derivedDataPath "$PWD/build/UITestDerivedData" \
+            -resultBundlePath "$PWD/build/UITests.xcresult" \
+            -only-testing:AudioRepeaterVolumeUITests/PlaybackUITests \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY= DEVELOPMENT_TEAM= \
+            2>&1 | tee build/logs/uitests.log
+
+      - name: Export simulator screenshots
+        if: always() && env.SIMULATOR_ID != ''
+        run: |
+          mkdir -p build/ui-artifacts
+          xcrun xcresulttool export attachments --path build/UITests.xcresult \
+            --output-path build/ui-artifacts || true
+          xcrun simctl launch "$SIMULATOR_ID" com.a2m.audiorepeater.ios --ui-test || true
+          sleep 3
+          xcrun simctl io "$SIMULATOR_ID" screenshot build/ui-artifacts/main.png || true
+
+      - name: Upload simulator screenshots
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: AudioRepeaterIOS-simulator
+          path: build/ui-artifacts/
+          if-no-files-found: warn
+          retention-days: 14
+
       - name: Upload build diagnostics
         if: always()
         uses: actions/upload-artifact@v7
@@ -132,5 +189,6 @@ jobs:
           path: |
             build/logs/
             build/Build.xcresult/
+            build/UITests.xcresult/
           if-no-files-found: warn
           retention-days: 14

@@ -5,11 +5,6 @@ import MediaPlayer
 import SwiftUI
 import UIKit
 
-enum PlaybackPath: String, Codable, CaseIterable {
-    case avAudioEngine
-    case remoteIO
-}
-
 enum PlaybackState: Equatable {
     case idle
     case preparing(message: String)
@@ -43,17 +38,47 @@ private struct PlaybackProgressEvent {
 }
 
 @MainActor
-final class AudioQueuePlayer: ObservableObject {
+final class AudioQueuePlayer: NSObject, ObservableObject, AVAudioRecorderDelegate {
     @Published private(set) var state: PlaybackState = .idle
     @Published private(set) var errorMessage: String?
+    @Published private(set) var recordingStatus = "Not recording"
+    @Published private(set) var lastRecordingURL: URL?
+    @Published private(set) var outputDescription = "Output follows the selected audio session"
 
     private var engine: AVAudioEngine?
     private var playerNode: AVAudioPlayerNode?
     private var remoteIOPlayer: RemoteIOPlayer?
-    private var screenCaptureRecorder: AnyObject?
+    private var microphoneRecorder: AVAudioRecorder?
+    private var interruptionObserver: NSObjectProtocol?
+    private var routeObserver: NSObjectProtocol?
     private var systemVolumeView: MPVolumeView?
     private var playbackTask: Task<Void, Never>?
     private var runID = 0
+
+    override init() {
+        super.init()
+        interruptionObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.interruptionNotification, object: nil, queue: .main
+        ) { [weak self] note in
+            let type = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
+            guard type == AVAudioSession.InterruptionType.began.rawValue else { return }
+            Task { @MainActor [weak self] in self?.stop() }
+        }
+        routeObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main
+        ) { [weak self] note in
+            let reason = note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt
+            Task { @MainActor [weak self] in
+                self?.updateOutputDescription()
+                if reason == AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue { self?.stop() }
+            }
+        }
+    }
+
+    deinit {
+        if let interruptionObserver { NotificationCenter.default.removeObserver(interruptionObserver) }
+        if let routeObserver { NotificationCenter.default.removeObserver(routeObserver) }
+    }
 
     private let playbackFormat = AVAudioFormat(
         commonFormat: .pcmFormatFloat32,
@@ -89,11 +114,15 @@ final class AudioQueuePlayer: ObservableObject {
         forceMaximumOutputVolume: Bool = false,
         avAudioSessionMode: String = "default",
         systemAudioCaptureURL: URL? = nil,
-        eventLogURL: URL? = nil
+        eventLogURL: URL? = nil,
+        processing: PlaybackSettings? = nil,
+        microphoneRecordingURL: URL? = nil
     ) {
+        guard !state.isRunning else { return }
         cancelCurrentPlayback(deactivateAudioSession: false)
         guard !items.isEmpty else { return }
         errorMessage = nil
+        state = .preparing(message: "Preparing playback")
 
         runID += 1
         let activeRunID = runID
@@ -130,13 +159,20 @@ final class AudioQueuePlayer: ObservableObject {
                     forceMaximumOutputVolume,
                 avAudioSessionMode: avAudioSessionMode,
                 systemAudioCaptureURL: systemAudioCaptureURL,
-                eventLogURL: eventLogURL
+                eventLogURL: eventLogURL,
+                processing: processing,
+                microphoneRecordingURL: microphoneRecordingURL
             )
         }
     }
 
     func stop() {
-        cancelCurrentPlayback(deactivateAudioSession: true)
+        guard state.isRunning else { return }
+        state = .preparing(message: "Stopping playback")
+        playbackTask?.cancel()
+        stopMicrophoneRecording()
+        // Stop callbacks release pending scheduled-buffer continuations.
+        stopEngine(deactivateAudioSession: false)
     }
 
     private func cancelCurrentPlayback(deactivateAudioSession: Bool) {
@@ -169,11 +205,21 @@ final class AudioQueuePlayer: ObservableObject {
         forceMaximumOutputVolume: Bool,
         avAudioSessionMode: String,
         systemAudioCaptureURL: URL?,
-        eventLogURL: URL?
+        eventLogURL: URL?,
+        processing: PlaybackSettings?,
+        microphoneRecordingURL: URL?
     ) async {
-        var stopped = false
+        var captureRecorder: AnyObject?
 
         do {
+            try processing?.validate()
+            if microphoneRecordingURL != nil {
+                let granted = await withCheckedContinuation { continuation in
+                    AVAudioSession.sharedInstance().requestRecordPermission { continuation.resume(returning: $0) }
+                }
+                try Task.checkCancellation()
+                guard granted else { throw PlaybackSettingsError.microphoneDenied }
+            }
             prepareEventLog(at: eventLogURL)
             recordEvent(
                 "AudioRepeaterIOS playQueue start items=\(items.count) sameDelay=\(sameFileDelaySeconds) diffDelay=\(differentFileDelaySeconds) path=\(playbackPath.rawValue) pan=\(avAudioEnginePan) gain=\(avAudioEngineGain) directPCM=\(avAudioEngineDirectPCM) isolateSignals=\(avAudioEngineIsolateSignals) eqFrequency=\(avAudioEngineEQFrequency) eqGain=\(avAudioEngineEQGain) eqBandwidth=\(avAudioEngineEQBandwidth) automaticFormat=\(avAudioEngineAutomaticFormat) completionCallback=\(avAudioEngineCompletionCallback) stopEachSignal=\(avAudioEngineStopPlayerEachSignal) completionDelayFrames=\(avAudioEngineCompletionDelayFrames) stereoMode=\(avAudioEngineStereoMode) ioBuffer=\(preferredIOBufferDuration) forceMaxVolume=\(forceMaximumOutputVolume) mode=\(avAudioSessionMode) captureSystemAudio=\(systemAudioCaptureURL != nil) displayIdleTimerDisabled=\(UIApplication.shared.isIdleTimerDisabled)",
@@ -189,15 +235,20 @@ final class AudioQueuePlayer: ObservableObject {
                     preferredIOBufferDuration,
                 forceMaximumOutputVolume:
                     forceMaximumOutputVolume,
-                eventLogURL: eventLogURL
+                eventLogURL: eventLogURL,
+                processing: processing,
+                recording: microphoneRecordingURL != nil
             )
+
+            try Task.checkCancellation()
+            if let microphoneRecordingURL { try startMicrophoneRecording(at: microphoneRecordingURL) }
 
             if let systemAudioCaptureURL {
                 guard #available(iOS 27.0, *) else {
                     throw AudioQueueError.screenCaptureUnavailable
                 }
                 let recorder = ScreenCaptureAudioRecorder()
-                screenCaptureRecorder = recorder
+                captureRecorder = recorder
                 try await recorder.start(outputURL: systemAudioCaptureURL) { [weak self] message in
                     self?.recordEvent(message, to: eventLogURL)
                 }
@@ -211,7 +262,17 @@ final class AudioQueuePlayer: ObservableObject {
                 "AudioRepeaterIOS route outputs=\(route) outputVolume=\(session.outputVolume) sampleRate=\(session.sampleRate) ioBufferDuration=\(session.ioBufferDuration)",
                 to: eventLogURL
             )
-            guard session.currentRoute.outputs.contains(where: { $0.portType == .builtInSpeaker }) else {
+            try Task.checkCancellation()
+            updateOutputDescription()
+            if let processing {
+                if processing.output == .speaker && !session.currentRoute.outputs.contains(where: { $0.portType == .builtInSpeaker }) {
+                    throw PlaybackSettingsError.outputUnavailable("Speaker (\(route))")
+                }
+                if processing.output == .receiver && !session.currentRoute.outputs.contains(where: { $0.portType == .builtInReceiver }) {
+                    throw PlaybackSettingsError.outputUnavailable("Receiver (\(route))")
+                }
+            } else if !session.currentRoute.outputs.contains(where: { $0.portType == .builtInSpeaker }) {
+                // Legacy measurement requests retain their speaker-only contract.
                 throw AudioQueueError.unexpectedOutputRoute(route)
             }
 
@@ -238,7 +299,8 @@ final class AudioQueuePlayer: ObservableObject {
                         avAudioEngineCompletionDelayFrames,
                     stereoMode:
                         avAudioEngineStereoMode,
-                    eventLogURL: eventLogURL
+                    eventLogURL: eventLogURL,
+                    processing: processing
                 )
             case .remoteIO:
                 totalScheduledFrames = try await runRemoteIO(
@@ -249,26 +311,26 @@ final class AudioQueuePlayer: ObservableObject {
                 )
             }
 
-            if #available(iOS 27.0, *), let recorder = screenCaptureRecorder as? ScreenCaptureAudioRecorder {
-                try await recorder.stop()
-                screenCaptureRecorder = nil
-            }
             recordEvent(
                 "AudioRepeaterIOS playQueue finish stopped=false framesScheduled=\(totalScheduledFrames)",
                 to: eventLogURL
             )
         } catch is CancellationError {
-            stopped = true
             recordEvent("AudioRepeaterIOS playQueue finish stopped=true", to: eventLogURL)
         } catch {
-            stopped = true
             if activeRunID == runID {
                 errorMessage = error.localizedDescription
             }
             recordEvent("AudioRepeaterIOS playQueue error \(error.localizedDescription)", to: eventLogURL)
         }
 
+        if #available(iOS 27.0, *), let recorder = captureRecorder as? ScreenCaptureAudioRecorder {
+            do { try await recorder.stop() }
+            catch { if activeRunID == runID { errorMessage = error.localizedDescription } }
+        }
+
         if activeRunID == runID {
+            stopMicrophoneRecording()
             stopEngine()
             playbackTask = nil
             state = .idle
@@ -279,7 +341,9 @@ final class AudioQueuePlayer: ObservableObject {
         modeName: String,
         preferredIOBufferDuration: Double,
         forceMaximumOutputVolume: Bool,
-        eventLogURL: URL?
+        eventLogURL: URL?,
+        processing: PlaybackSettings?,
+        recording: Bool
     ) async throws {
         // IOAudio2 can restart the speaker service while arming the ring.
         // AVAudioSession reports paramErr (-50) during that short handoff.
@@ -293,9 +357,9 @@ final class AudioQueuePlayer: ObservableObject {
             let session = AVAudioSession.sharedInstance()
             var stage = "setCategory"
             do {
-                let mode: AVAudioSession.Mode
-                let category: AVAudioSession.Category
-                let categoryOptions: AVAudioSession.CategoryOptions
+                var mode: AVAudioSession.Mode
+                var category: AVAudioSession.Category
+                var categoryOptions: AVAudioSession.CategoryOptions
                 switch modeName {
                 case "measurement":
                     mode = .measurement
@@ -348,6 +412,24 @@ final class AudioQueuePlayer: ObservableObject {
                     category = .playback
                     categoryOptions = []
                 }
+                if let processing {
+                    switch processing.effectiveSessionMode {
+                    case .default: mode = .default
+                    case .measurement: mode = .measurement
+                    case .moviePlayback: mode = .moviePlayback
+                    case .spokenAudio: mode = .spokenAudio
+                    case .voiceChat: mode = .voiceChat
+                    case .videoChat: mode = .videoChat
+                    }
+                    category = processing.usesInputCategory || recording ? .playAndRecord : .playback
+                    categoryOptions = category == .playAndRecord && processing.output == .system
+                        ? [.allowBluetooth, .allowBluetoothA2DP] : []
+                    if processing.output == .speaker { categoryOptions.insert(.defaultToSpeaker) }
+                } else if recording {
+                    category = .playAndRecord
+                    mode = .measurement
+                    categoryOptions = [.defaultToSpeaker]
+                }
                 try session.setCategory(
                     category,
                     mode: mode,
@@ -372,6 +454,13 @@ final class AudioQueuePlayer: ObservableObject {
                 }
                 stage = "setActive"
                 try session.setActive(true)
+                if category == .playAndRecord {
+                    try session.overrideOutputAudioPort(processing?.output == .speaker ? .speaker : .none)
+                    if recording, processing?.output != .system,
+                       let input = session.availableInputs?.first(where: { $0.portType == .builtInMic }) {
+                        try session.setPreferredInput(input)
+                    }
+                }
                 if forceMaximumOutputVolume,
                    session.outputVolume < 0.999 {
                     stage = "setMaximumOutputVolume"
@@ -451,6 +540,47 @@ final class AudioQueuePlayer: ObservableObject {
         }
     }
 
+    private func updateOutputDescription() {
+        let session = AVAudioSession.sharedInstance()
+        let route = session.currentRoute.outputs.map(\.portName).joined(separator: ", ")
+        outputDescription = "\(route) · \(Int(session.sampleRate)) Hz · \(session.mode.rawValue)"
+    }
+
+    private func startMicrophoneRecording(at url: URL) throws {
+        let recorder = try AVAudioRecorder(url: url, settings: [
+            AVFormatIDKey: kAudioFormatLinearPCM,
+            AVSampleRateKey: 48_000,
+            AVNumberOfChannelsKey: 1,
+            AVLinearPCMBitDepthKey: 16,
+            AVLinearPCMIsFloatKey: false,
+            AVLinearPCMIsBigEndianKey: false,
+        ])
+        recorder.delegate = self
+        guard recorder.prepareToRecord(), recorder.record() else { throw PlaybackSettingsError.microphoneUnavailable }
+        microphoneRecorder = recorder
+        recordingStatus = "Recording microphone · 48 kHz mono PCM16 WAV"
+    }
+
+    private func stopMicrophoneRecording() {
+        guard let recorder = microphoneRecorder else { return }
+        recorder.stop()
+        microphoneRecorder = nil
+        if let file = try? AVAudioFile(forReading: recorder.url), file.length > 0 {
+            lastRecordingURL = recorder.url
+            recordingStatus = "Saved \(recorder.url.lastPathComponent)"
+        } else {
+            recordingStatus = "No microphone samples were saved"
+        }
+    }
+
+    nonisolated func audioRecorderEncodeErrorDidOccur(_ recorder: AVAudioRecorder, error: Error?) {
+        Task { @MainActor [weak self] in
+            guard let self, self.microphoneRecorder === recorder else { return }
+            self.errorMessage = error?.localizedDescription ?? "Microphone recording failed."
+            self.stop()
+        }
+    }
+
     private func runAVAudioEngine(
         items: [QueueItem],
         sameFileDelaySeconds: Double,
@@ -467,7 +597,8 @@ final class AudioQueuePlayer: ObservableObject {
         stopPlayerEachSignal: Bool,
         completionDelayFrames: Int,
         stereoMode: String,
-        eventLogURL: URL?
+        eventLogURL: URL?,
+        processing: PlaybackSettings?
     ) async throws -> AVAudioFramePosition {
         let (engine, playerNode) = try await startAVAudioEngine(
             eqFrequency: eqFrequency,
@@ -475,7 +606,8 @@ final class AudioQueuePlayer: ObservableObject {
             eqBandwidth: eqBandwidth,
             automaticFormat: automaticFormat,
             stereoMode: stereoMode,
-            eventLogURL: eventLogURL
+            eventLogURL: eventLogURL,
+            processing: processing
         )
         self.engine = engine
         self.playerNode = playerNode
@@ -817,7 +949,8 @@ final class AudioQueuePlayer: ObservableObject {
         eqBandwidth: Float,
         automaticFormat: Bool,
         stereoMode: String,
-        eventLogURL: URL?
+        eventLogURL: URL?,
+        processing: PlaybackSettings?
     ) async throws -> (AVAudioEngine, AVAudioPlayerNode) {
         let maximumAttempts = 4
         var lastError: Error?
@@ -827,7 +960,9 @@ final class AudioQueuePlayer: ObservableObject {
             let engine = AVAudioEngine()
             let playerNode = AVAudioPlayerNode()
             engine.attach(playerNode)
-            if eqGain == 0 {
+            if let processing {
+                try PlaybackEffects.connect(player: playerNode, engine: engine, format: playbackFormat, settings: processing)
+            } else if eqGain == 0 {
                 engine.connect(
                     playerNode,
                     to: engine.mainMixerNode,

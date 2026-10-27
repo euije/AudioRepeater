@@ -1,4 +1,5 @@
 import Foundation
+import AVFoundation
 import SwiftUI
 
 struct ContentView: View {
@@ -13,6 +14,9 @@ struct ContentView: View {
     @State private var isImporterPresented = false
     @State private var isImporting = false
     @State private var alertMessage: String?
+    @State private var settings = PlaybackSettings()
+    @State private var presentedSheet: PlaybackSheet?
+    @State private var didLoadLibrary = false
 
     private var defaultRepeat: Int? {
         positiveInt(defaultRepeatText)
@@ -49,13 +53,29 @@ struct ContentView: View {
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 16) {
-                controls
-                playbackControls
+            List {
+                playbackSettings
+                Section("Queue controls") { controls }
                 listContent
             }
-            .padding()
+            .listStyle(.insetGrouped)
             .navigationTitle("AudioRepeater")
+            .navigationBarTitleDisplayMode(.inline)
+            .safeAreaInset(edge: .bottom) {
+                playbackControls.padding(.horizontal).padding(.vertical, 8).background(.regularMaterial)
+            }
+            .toolbar { ToolbarItem(placement: .navigationBarTrailing) { EditButton().disabled(isPlaybackRunning) } }
+            .sheet(item: $presentedSheet) { sheet in
+                if sheet == .recordings {
+                    RecordingLibraryView { url in
+                        guard !items.contains(where: { $0.localURL == url }) else { return }
+                        items.append(AudioItem(sourceURL: url, localURL: url, displayName: url.lastPathComponent,
+                            repeatText: defaultRepeatText, deleteLocalFileOnRemove: false))
+                    }
+                } else {
+                    PlaybackEffectEditor(settings: $settings, sheet: sheet)
+                }
+            }
             .fileImporter(
                 isPresented: $isImporterPresented,
                 allowedContentTypes: [ImportManager.wavType],
@@ -76,15 +96,160 @@ struct ContentView: View {
                 alertMessage = message
             }
             .task {
-                loadPinnedLibraryIfPresent()
+                restoreLibrary()
+                seedSimulatorQueueIfRequested()
                 ioAudio2Bridge.resumeMonitoringIfNeeded()
                 await monitorRemotePlaybackRequests()
             }
+            .onChange(of: items) { _ in persistLibrary() }
+            .onChange(of: settings) { _ in persistLibrary() }
+            .onChange(of: [defaultRepeatText, sameFileDelayText, differentFileDelayText]) { _ in persistLibrary() }
             .onDisappear {
                 player.stop()
-                items.forEach { ImportManager.deleteLocalFileIfOwned($0) }
+                persistLibrary()
             }
         }
+    }
+
+    private var playbackSettings: some View {
+        Group {
+            Section("Playback") {
+                Picker("Playback path", selection: $settings.path) {
+                    ForEach(PlaybackPath.allCases, id: \.self) { Text($0.label).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .accessibilityIdentifier("playbackPath")
+                .disabled(isPlaybackRunning || ioAudio2RingOverwriteEnabled)
+                DisclosureGroup("Experimental bridge") {
+                    Toggle("IOAudio2 ring overwrite", isOn: $ioAudio2RingOverwriteEnabled)
+                        .disabled(isPlaybackRunning)
+                    Text("Requires the separately configured Mac IOAudio2 bridge.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            Section("Playback effects") {
+                HStack {
+                    Picker("Effect", selection: $settings.effect) {
+                        ForEach(PlaybackEffect.allCases, id: \.self) { Text($0.label).tag($0) }
+                    }
+                    .accessibilityIdentifier("effectPicker")
+                    Button("Settings") {
+                        presentedSheet = settings.effect == .equalizer ? .equalizer : .dynamics
+                    }
+                    .disabled(settings.effect == .off)
+                    .buttonStyle(.borderless)
+                    .accessibilityIdentifier("effectSettings")
+                }
+                .disabled(isPlaybackRunning || ioAudio2RingOverwriteEnabled || settings.path != .avAudioEngine)
+                if settings.path != .avAudioEngine {
+                    Text("Effects require AVAudioEngine.").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            Section("Playback output") {
+                Picker("Output", selection: $settings.output) {
+                    ForEach(PlaybackOutput.allCases, id: \.self) { Text($0.label).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                Picker("Session mode", selection: $settings.sessionMode) {
+                    ForEach(PlaybackSessionMode.allCases, id: \.self) { Text($0.label).tag($0) }
+                }
+                .disabled(settings.recordMicrophone || settings.output == .receiver)
+                Text("Active mode: \(settings.effectiveSessionMode.label)")
+                    .font(.caption).foregroundStyle(.secondary)
+                Text(player.outputDescription).font(.caption).foregroundStyle(.secondary)
+            }
+            .disabled(isPlaybackRunning || ioAudio2RingOverwriteEnabled)
+            Section("Recording") {
+                Toggle("Record microphone with playback", isOn: $settings.recordMicrophone)
+                    .accessibilityIdentifier("recordMicrophone")
+                if #available(iOS 27.0, *) {
+                    Toggle("Capture app audio", isOn: $settings.captureSystemAudio)
+                }
+                if settings.recordMicrophone {
+                    Text("48 kHz mono PCM16 WAV. Measurement mode minimizes input processing. Voice chat modes retain their voice processing.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Text(player.recordingStatus).font(.caption).foregroundStyle(.secondary)
+                Button { presentedSheet = .recordings } label: {
+                    Label("Recordings", systemImage: "waveform.badge.mic")
+                }
+                .accessibilityIdentifier("openRecordings")
+            }
+            .disabled(isPlaybackRunning || ioAudio2RingOverwriteEnabled)
+        }
+    }
+
+    private func restoreLibrary() {
+        guard !didLoadLibrary else { return }
+        do {
+            if let saved = try LibraryStore().load() {
+                items = saved.items
+                defaultRepeatText = saved.snapshot.defaultRepeats
+                sameFileDelayText = saved.snapshot.repeatDelay
+                differentFileDelayText = saved.snapshot.fileDelay
+                settings = saved.snapshot.settings
+            } else {
+                loadPinnedLibraryIfPresent()
+            }
+        } catch {
+            alertMessage = "Could not restore the saved queue: \(error.localizedDescription)"
+        }
+        didLoadLibrary = true
+    }
+
+    private func seedSimulatorQueueIfRequested() {
+        #if DEBUG && targetEnvironment(simulator)
+        guard ProcessInfo.processInfo.arguments.contains("--ui-test"), items.isEmpty else { return }
+        do {
+            let store = LibraryStore()
+            try store.prepareDirectory(store.importsDirectory)
+            let url = store.importsDirectory.appendingPathComponent("test-tone.wav")
+            let format = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1)!
+            let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 24_000)!
+            buffer.frameLength = buffer.frameCapacity
+            for index in 0..<Int(buffer.frameLength) {
+                buffer.floatChannelData![0][index] = 0.02 * sin(Float(index) * 2 * .pi * 910 / 48_000)
+            }
+            let file = try AVAudioFile(forWriting: url, settings: format.settings)
+            try file.write(from: buffer)
+            items = [AudioItem(sourceURL: url, localURL: url, displayName: "Test tone.wav", repeatText: "20")]
+            persistLibrary()
+        } catch { alertMessage = error.localizedDescription }
+        #endif
+    }
+
+    private func persistLibrary() {
+        guard didLoadLibrary else { return }
+        do {
+            try LibraryStore().save(items: items, defaultRepeats: defaultRepeatText,
+                repeatDelay: sameFileDelayText, fileDelay: differentFileDelayText, settings: settings)
+        } catch { alertMessage = "Could not save the queue: \(error.localizedDescription)" }
+    }
+
+    private func startManualPlayback() {
+        let queue = items.compactMap { item -> QueueItem? in
+            guard item.isEnabled, let repeats = item.repeatCount else { return nil }
+            return QueueItem(itemKey: item.playbackKey, sourceURL: item.sourceURL, localURL: item.localURL,
+                displayName: item.displayName, repeatCount: repeats)
+        }
+        if ioAudio2RingOverwriteEnabled {
+            ioAudio2Bridge.play(items: queue, sameFileDelaySeconds: sameFileDelay ?? 0,
+                differentFileDelaySeconds: differentFileDelay ?? 0)
+            return
+        }
+        do {
+            try settings.validate()
+            let store = LibraryStore()
+            let microphoneURL = settings.recordMicrophone ? try store.recordingURL(extension: "wav") : nil
+            let captureURL: URL?
+            if settings.captureSystemAudio {
+                guard #available(iOS 27.0, *) else { throw AudioQueueError.screenCaptureUnavailable }
+                captureURL = try store.recordingURL(extension: "caf")
+            } else { captureURL = nil }
+            player.play(items: queue, sameFileDelaySeconds: sameFileDelay ?? 0,
+                differentFileDelaySeconds: differentFileDelay ?? 0, playbackPath: settings.path,
+                systemAudioCaptureURL: captureURL, processing: settings, microphoneRecordingURL: microphoneURL)
+        } catch { alertMessage = error.localizedDescription }
     }
 
     @MainActor
@@ -188,6 +353,8 @@ struct ContentView: View {
                 request.queueItems[0].displayName ==
                     "c0004 AudioRepeater ring keepalive"
             if !isRingKeepalive {
+                if let processing = request.processing { settings = processing }
+                settings.path = request.playbackPath
                 items = request.queueItems.map { item in
                     AudioItem(
                         playbackKey: item.itemKey,
@@ -260,7 +427,9 @@ struct ContentView: View {
                     request.forceMaximumOutputVolume,
                 avAudioSessionMode: request.avAudioSessionMode,
                 systemAudioCaptureURL: request.systemAudioCaptureURL,
-                eventLogURL: request.eventLogURL
+                eventLogURL: request.eventLogURL,
+                processing: request.processing,
+                microphoneRecordingURL: request.microphoneRecordingURL
             )
         } catch {
             alertMessage = error.localizedDescription
@@ -282,166 +451,95 @@ struct ContentView: View {
     private var controls: some View {
         VStack(spacing: 12) {
             HStack(spacing: 12) {
-                labeledTextField(
-                    title: "Default repeats",
-                    text: $defaultRepeatText,
-                    keyboardType: .numberPad,
-                    sanitize: sanitizeRepeatInput
-                )
-
-                Button {
-                    isImporterPresented = true
-                } label: {
+                labeledTextField(title: "Default repeats", text: $defaultRepeatText,
+                    keyboardType: .numberPad, sanitize: sanitizeRepeatInput)
+                Button { isImporterPresented = true } label: {
                     Label(isImporting ? "Adding" : "Add files", systemImage: "plus")
-                        .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(isPlaybackRunning || isImporting || defaultRepeat == nil)
+                .accessibilityIdentifier("addFiles")
             }
-
-            Button {
-                for index in items.indices {
-                    items[index].repeatText = defaultRepeatText
+            HStack {
+                Button("Apply repeats to all") {
+                    for index in items.indices { items[index].repeatText = defaultRepeatText }
                 }
-            } label: {
-                Label("Apply repeats to all", systemImage: "checkmark.circle")
-                    .frame(maxWidth: .infinity)
+                .disabled(isPlaybackRunning || defaultRepeat == nil || items.isEmpty)
+                Spacer()
+                Text("Repeats").font(.caption).foregroundStyle(.secondary)
             }
-            .buttonStyle(.bordered)
-            .disabled(isPlaybackRunning || defaultRepeat == nil || items.isEmpty)
-
+            .buttonStyle(.borderless)
             HStack(spacing: 12) {
-                labeledTextField(
-                    title: "Repeat delay (s)",
-                    text: $sameFileDelayText,
-                    keyboardType: .decimalPad,
-                    sanitize: sanitizeDelayInput
-                )
-
-                labeledTextField(
-                    title: "File delay (s)",
-                    text: $differentFileDelayText,
-                    keyboardType: .decimalPad,
-                    sanitize: sanitizeDelayInput
-                )
-            }
-
-            Toggle(isOn: $ioAudio2RingOverwriteEnabled) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("IOAudio2 ring overwrite")
-                        .font(.subheadline.weight(.semibold))
-                    Text(
-                        ioAudio2RingOverwriteEnabled
-                            ? "Enabled · c0004 optimized settings"
-                            : "Disabled · AVAudioEngine"
-                    )
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Repeat delay (s)").font(.caption)
+                    labeledTextField(title: "Repeat delay (s)", text: $sameFileDelayText,
+                        keyboardType: .decimalPad, sanitize: sanitizeDelayInput)
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("File delay (s)").font(.caption)
+                    labeledTextField(title: "File delay (s)", text: $differentFileDelayText,
+                        keyboardType: .decimalPad, sanitize: sanitizeDelayInput)
                 }
             }
-            .toggleStyle(.switch)
-            .tint(.orange)
-            .disabled(isPlaybackRunning)
         }
     }
 
     private var playbackControls: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 8) {
             HStack(spacing: 12) {
-                Button {
-                    let queueItems = items.compactMap { item -> QueueItem? in
-                        guard item.isEnabled,
-                              let repeatCount = item.repeatCount else {
-                            return nil
-                        }
-                        return QueueItem(
-                            itemKey: item.playbackKey,
-                            sourceURL: item.sourceURL,
-                            localURL: item.localURL,
-                            displayName: item.displayName,
-                            repeatCount: repeatCount
-                        )
-                    }
-
-                    if ioAudio2RingOverwriteEnabled {
-                        ioAudio2Bridge.play(
-                            items: queueItems,
-                            sameFileDelaySeconds: sameFileDelay ?? 0,
-                            differentFileDelaySeconds:
-                                differentFileDelay ?? 0
-                        )
-                    } else {
-                        player.play(
-                            items: queueItems,
-                            sameFileDelaySeconds: sameFileDelay ?? 0,
-                            differentFileDelaySeconds:
-                                differentFileDelay ?? 0
-                        )
-                    }
-                } label: {
-                    Label(
-                        ioAudio2RingOverwriteEnabled
-                            ? "IOAudio2 playback"
-                            : "Standard playback",
-                        systemImage: "play.fill"
-                    )
-                    .frame(maxWidth: .infinity)
+                Button(action: startManualPlayback) {
+                    Label("Play", systemImage: "play.fill").frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(ioAudio2RingOverwriteEnabled ? .orange : .blue)
                 .disabled(!canPlay)
-
+                .accessibilityIdentifier("playQueue")
                 Button {
-                    if ioAudio2Bridge.state.isRunning {
-                        ioAudio2Bridge.stop()
-                    }
-                    if player.state.isRunning {
-                        player.stop()
-                    }
+                    if ioAudio2Bridge.state.isRunning { ioAudio2Bridge.stop() }
+                    if player.state.isRunning { player.stop() }
                 } label: {
-                    Label("Stop", systemImage: "stop.fill")
-                        .frame(maxWidth: .infinity)
+                    Label("Stop", systemImage: "stop.fill").frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.bordered)
                 .disabled(!isPlaybackRunning)
+                .accessibilityIdentifier("stopQueue")
             }
-
             playbackStatusCard
         }
     }
 
     private var listContent: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Queue (\(enabledItems.count)/\(items.count) enabled)")
-                .font(.headline)
-
+        Section {
             if items.isEmpty {
-                VStack(spacing: 12) {
-                    Image(systemName: "music.note")
-                        .font(.largeTitle)
-                        .foregroundStyle(.secondary)
-                    Text("No WAV files")
-                        .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                Label("No WAV files. Add files to build a queue.", systemImage: "music.note")
+                    .foregroundStyle(.secondary).padding(.vertical, 12)
             } else {
-                List {
-                    ForEach($items) { $item in
-                        AudioItemRow(
-                            item: $item,
-                            isPlaying: isPlaybackRunning,
-                            playbackProgress: playbackProgress(for: item)
-                        ) {
-                            if let index = items.firstIndex(where: { $0.id == item.id }) {
-                                let removed = items.remove(at: index)
-                                ImportManager.deleteLocalFileIfOwned(removed)
-                            }
+                HStack {
+                    Button(enabledItems.count == items.count ? "Deselect all" : "Select all") {
+                        let enabled = enabledItems.count != items.count
+                        for index in items.indices { items[index].isEnabled = enabled }
+                    }
+                    .disabled(isPlaybackRunning)
+                    Spacer()
+                    Text("\(enabledItems.count)/\(items.count) enabled").font(.caption).foregroundStyle(.secondary)
+                }
+                .buttonStyle(.borderless)
+                ForEach($items) { $item in
+                    AudioItemRow(item: $item, isPlaying: isPlaybackRunning,
+                        playbackProgress: playbackProgress(for: item)) {
+                        if let index = items.firstIndex(where: { $0.id == item.id }) {
+                            let removed = items.remove(at: index)
+                            ImportManager.deleteLocalFileIfOwned(removed)
                         }
                     }
                 }
-                .listStyle(.plain)
+                .onMove { source, destination in
+                    guard !isPlaybackRunning else { return }
+                    items.move(fromOffsets: source, toOffset: destination)
+                }
+                .moveDisabled(isPlaybackRunning)
             }
-        }
+        } header: { Text("Queue") }
     }
 
     private func labeledTextField(
@@ -510,7 +608,7 @@ struct ContentView: View {
                 Text(
                     ioAudio2RingOverwriteEnabled
                         ? "IOAudio2 ring overwrite"
-                        : "AVAudioEngine"
+                        : settings.path.label
                 )
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)

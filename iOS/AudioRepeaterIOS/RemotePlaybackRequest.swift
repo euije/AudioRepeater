@@ -23,6 +23,8 @@ struct ResolvedRemotePlaybackRequest {
     let captureSystemAudio: Bool
     let systemAudioCaptureURL: URL?
     let eventLogURL: URL
+    let processing: PlaybackSettings?
+    let microphoneRecordingURL: URL?
 }
 
 enum RemotePlaybackRequestLoader {
@@ -54,14 +56,16 @@ enum RemotePlaybackRequestLoader {
         let avAudioSessionMode: String?
         let captureSystemAudio: Bool?
         let systemAudioCaptureFileName: String?
+        let processing: PlaybackSettings?
+        let recordMicrophone: Bool?
     }
 
     private static let manifestName = "remote-playback.json"
     private static let audioDirectoryName = "RemoteAudio"
 
-    static func consumeIfPresent() throws -> ResolvedRemotePlaybackRequest? {
+    static func consumeIfPresent(in directory: URL? = nil) throws -> ResolvedRemotePlaybackRequest? {
         let fileManager = FileManager.default
-        let documentsURL = try fileManager.url(
+        let documentsURL = try directory ?? fileManager.url(
             for: .documentDirectory,
             in: .userDomainMask,
             appropriateFor: nil,
@@ -74,6 +78,13 @@ enum RemotePlaybackRequestLoader {
         }
 
         let request = try JSONDecoder().decode(Request.self, from: Data(contentsOf: manifestURL))
+        let playbackPath = request.playbackPath ?? request.processing?.path ?? .avAudioEngine
+        var processing = request.processing
+        processing?.path = playbackPath
+        if let recordMicrophone = request.recordMicrophone, processing != nil {
+            processing?.recordMicrophone = recordMicrophone
+        }
+        try processing?.validate()
         guard !request.files.isEmpty else {
             throw RemotePlaybackRequestError.emptyFileList
         }
@@ -175,12 +186,7 @@ enum RemotePlaybackRequestLoader {
         }
 
         let eventLogURL = documentsURL.appendingPathComponent("remote-playback-status.log", isDirectory: false)
-        if fileManager.fileExists(atPath: eventLogURL.path) {
-            try fileManager.removeItem(at: eventLogURL)
-        }
-        try fileManager.removeItem(at: manifestURL)
-
-        let captureSystemAudio = request.captureSystemAudio ?? false
+        let captureSystemAudio = request.captureSystemAudio ?? processing?.captureSystemAudio ?? false
         let captureFileName = request.systemAudioCaptureFileName ?? "screen-capture.caf"
         guard !captureSystemAudio || isSafeFileName(captureFileName) else {
             throw RemotePlaybackRequestError.invalidFileName(captureFileName)
@@ -188,12 +194,18 @@ enum RemotePlaybackRequestLoader {
         let systemAudioCaptureURL = captureSystemAudio
             ? documentsURL.appendingPathComponent(captureFileName, isDirectory: false)
             : nil
+        let microphoneRecordingURL = request.recordMicrophone ?? processing?.recordMicrophone ?? false
+            ? try LibraryStore(root: documentsURL.deletingLastPathComponent()).recordingURL(extension: "wav") : nil
+
+        // Retain invalid requests and their existing logs for diagnosis.
+        if fileManager.fileExists(atPath: eventLogURL.path) { try fileManager.removeItem(at: eventLogURL) }
+        try fileManager.removeItem(at: manifestURL)
 
         return ResolvedRemotePlaybackRequest(
             queueItems: queueItems,
             sameFileDelaySeconds: request.sameFileDelaySeconds,
             differentFileDelaySeconds: request.differentFileDelaySeconds,
-            playbackPath: request.playbackPath ?? .avAudioEngine,
+            playbackPath: playbackPath,
             avAudioEnginePan: avAudioEnginePan,
             avAudioEngineGain: avAudioEngineGain,
             avAudioEngineDirectPCM: request.avAudioEngineDirectPCM ?? false,
@@ -218,7 +230,9 @@ enum RemotePlaybackRequestLoader {
             avAudioSessionMode: avAudioSessionMode,
             captureSystemAudio: captureSystemAudio,
             systemAudioCaptureURL: systemAudioCaptureURL,
-            eventLogURL: eventLogURL
+            eventLogURL: eventLogURL,
+            processing: processing,
+            microphoneRecordingURL: microphoneRecordingURL
         )
     }
 
