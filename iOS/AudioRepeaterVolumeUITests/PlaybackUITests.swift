@@ -41,7 +41,8 @@ final class PlaybackUITests: XCTestCase {
         playBrieflyAndStop()
         let microphone = app.switches["recordMicrophone"]
         reveal(microphone)
-        if microphone.value as? String != "1" { microphone.tap() }
+        if microphone.value as? String != "1" { tapSwitchThumb(microphone) }
+        capture("Microphone toggle")
         XCTAssertEqual(microphone.value as? String, "1", "The switch must change before testing persistence")
         capture("Recording and queue")
         app.terminate()
@@ -53,7 +54,7 @@ final class PlaybackUITests: XCTestCase {
         XCTAssertTrue(item.exists)
         // Leave the next test with microphone capture disabled.
         reveal(microphone)
-        if microphone.value as? String == "1" { microphone.tap() }
+        if microphone.value as? String == "1" { tapSwitchThumb(microphone) }
         reveal(app.buttons["effectPicker"])
         app.buttons["effectPicker"].tap()
         app.buttons["Off"].tap()
@@ -98,5 +99,11 @@ final class PlaybackUITests: XCTestCase {
             start.press(forDuration: 0.15, thenDragTo: end)
         }
         XCTFail("Could not reveal the complete control above the fixed playback bar: \(element)")
+    }
+
+    private func tapSwitchThumb(_ element: XCUIElement) {
+        // SwiftUI exposes the whole form row as the switch's accessibility
+        // frame. Its center is the label; the switch itself is at the trailing edge.
+        element.coordinate(withNormalizedOffset: CGVector(dx: 0.93, dy: 0.5)).tap()
     }
 }
