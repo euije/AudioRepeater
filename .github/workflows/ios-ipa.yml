@@ -109,6 +109,9 @@ jobs:
               assert root + info['CFBundleExecutable'] in ipa.namelist()
               assert info['CFBundlePackageType'] == 'APPL'
               assert info['CFBundleSupportedPlatforms'] == ['iPhoneOS']
+              assert info.get('NSMicrophoneUsageDescription')
+              assert info.get('UIFileSharingEnabled') is True
+              assert info.get('LSSupportsOpeningDocumentsInPlace') is True
               assert not any('.appex/' in n for n in ipa.namelist())
               print('Verified device IPA:', info['CFBundleIdentifier'], 'minimum iOS', info['MinimumOSVersion'])
           PY

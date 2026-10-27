@@ -41,3 +41,8 @@ phone. Updates installed with `adb install -r` retain existing app data.
 See [iOS setup](iOS/README.md) for Xcode builds, signing, remote playback, and
 the optional IOAudio2 bridge. Device identifiers, SSH configuration, and Apple
 team identifiers must be supplied locally.
+
+The iOS app offers AVAudioEngine and RemoteIO, five-band EQ, native dynamics
+processing, System/Speaker/Receiver output, microphone recording during
+playback, and a persistent queue. See the [Windows installation guide](iOS/WINDOWS_INSTALL.md)
+to build and install an IPA without a local Mac.

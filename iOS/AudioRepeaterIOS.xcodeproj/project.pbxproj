@@ -378,6 +378,7 @@
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = AudioRepeaterIOS/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = AudioRepeater;
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Record microphone audio alongside the selected WAV playback.";
 				INFOPLIST_KEY_UIFileSharingEnabled = YES;
@@ -415,6 +416,7 @@
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = AudioRepeaterIOS/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = AudioRepeater;
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Record microphone audio alongside the selected WAV playback.";
 				INFOPLIST_KEY_UIFileSharingEnabled = YES;

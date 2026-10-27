@@ -18,16 +18,7 @@ final class PlaybackUITests: XCTestCase {
         for path in ["AVAudioEngine", "RemoteIO"] {
             app.swipeDown()
             app.segmentedControls["playbackPath"].buttons[path].tap()
-            app.buttons["playQueue"].tap()
-            XCTAssertTrue(app.buttons["stopQueue"].isEnabled)
-            // Give the real audio unit time to start, then exercise cancellation.
-            sleep(2)
-            XCTAssertFalse(app.alerts.firstMatch.exists, "Playback reported an error")
-            app.buttons["stopQueue"].tap()
-            let idle = NSPredicate(format: "enabled == true")
-            expectation(for: idle, evaluatedWith: app.buttons["playQueue"])
-            waitForExpectations(timeout: 10)
-            XCTAssertFalse(app.alerts.firstMatch.exists)
+            playBrieflyAndStop()
         }
         capture("Playback paths")
     }
@@ -40,12 +31,14 @@ final class PlaybackUITests: XCTestCase {
         app.sliders["910 Hz"].adjust(toNormalizedSliderPosition: 0.7)
         capture("Equalizer")
         app.buttons["Done"].tap()
+        playBrieflyAndStop()
         app.buttons["effectPicker"].tap()
         app.buttons["Dynamics Processing"].tap()
         app.buttons["effectSettings"].tap()
         XCTAssertTrue(app.sliders["Threshold"].waitForExistence(timeout: 5))
         capture("Dynamics")
         app.buttons["Done"].tap()
+        playBrieflyAndStop()
         let microphone = app.switches["recordMicrophone"]
         for _ in 0..<4 where !microphone.isHittable { app.swipeUp() }
         XCTAssertTrue(microphone.isHittable)
@@ -71,5 +64,17 @@ final class PlaybackUITests: XCTestCase {
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)
+    }
+
+    private func playBrieflyAndStop() {
+        app.buttons["playQueue"].tap()
+        XCTAssertTrue(app.buttons["stopQueue"].isEnabled)
+        sleep(2)
+        XCTAssertFalse(app.alerts.firstMatch.exists, "Playback reported an error")
+        app.buttons["stopQueue"].tap()
+        let idle = NSPredicate(format: "enabled == true")
+        expectation(for: idle, evaluatedWith: app.buttons["playQueue"])
+        waitForExpectations(timeout: 10)
+        XCTAssertFalse(app.alerts.firstMatch.exists)
     }
 }

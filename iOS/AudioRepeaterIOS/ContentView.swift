@@ -166,7 +166,7 @@ struct ContentView: View {
                     Toggle("Capture app audio", isOn: $settings.captureSystemAudio)
                 }
                 if settings.recordMicrophone {
-                    Text("48 kHz mono PCM16 WAV. Measurement mode minimizes input processing. Voice chat modes retain their voice processing.")
+                    Text("48 kHz mono PCM16 WAV. Measurement mode minimizes input processing. Voice chat modes request the system's chat session policy.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Text(player.recordingStatus).font(.caption).foregroundStyle(.secondary)
