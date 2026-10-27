@@ -143,6 +143,8 @@ struct ContentView: View {
                 .disabled(isPlaybackRunning || ioAudio2RingOverwriteEnabled || settings.path != .avAudioEngine)
                 if settings.path != .avAudioEngine {
                     Text("Effects require AVAudioEngine.").font(.caption).foregroundStyle(.secondary)
+                } else if ioAudio2RingOverwriteEnabled {
+                    Text("Effects are off while the experimental bridge is enabled.").font(.caption).foregroundStyle(.secondary)
                 }
             }
             Section("Playback output") {
@@ -154,7 +156,7 @@ struct ContentView: View {
                     ForEach(PlaybackSessionMode.allCases, id: \.self) { Text($0.label).tag($0) }
                 }
                 .disabled(settings.recordMicrophone || settings.output == .receiver)
-                Text("Active mode: \(settings.effectiveSessionMode.label)")
+                Text("\(isPlaybackRunning ? "Active" : "Next playback") mode: \(settings.effectiveSessionMode.label)")
                     .font(.caption).foregroundStyle(.secondary)
                 Text(player.outputDescription).font(.caption).foregroundStyle(.secondary)
             }
@@ -453,8 +455,11 @@ struct ContentView: View {
     private var controls: some View {
         VStack(spacing: 12) {
             HStack(spacing: 12) {
-                labeledTextField(title: "Default repeats", text: $defaultRepeatText,
-                    keyboardType: .numberPad, sanitize: sanitizeRepeatInput)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Default repeats").font(.caption)
+                    labeledTextField(title: "Default repeats", text: $defaultRepeatText,
+                        keyboardType: .numberPad, sanitize: sanitizeRepeatInput)
+                }
                 Button { isImporterPresented = true } label: {
                     Label(isImporting ? "Adding" : "Add files", systemImage: "plus")
                 }
@@ -468,7 +473,6 @@ struct ContentView: View {
                 }
                 .disabled(isPlaybackRunning || defaultRepeat == nil || items.isEmpty)
                 Spacer()
-                Text("Repeats").font(.caption).foregroundStyle(.secondary)
             }
             .buttonStyle(.borderless)
             HStack(spacing: 12) {

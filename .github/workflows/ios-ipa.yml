@@ -110,6 +110,7 @@ jobs:
               assert info['CFBundlePackageType'] == 'APPL'
               assert info['CFBundleSupportedPlatforms'] == ['iPhoneOS']
               assert info.get('NSMicrophoneUsageDescription')
+              assert info.get('NSScreenCaptureUsageDescription')
               assert info.get('UIFileSharingEnabled') is True
               assert info.get('LSSupportsOpeningDocumentsInPlace') is True
               assert info['CFBundleShortVersionString'] == '1.1'

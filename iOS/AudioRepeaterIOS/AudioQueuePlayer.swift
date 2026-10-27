@@ -424,6 +424,10 @@ final class AudioQueuePlayer: NSObject, ObservableObject, AVAudioRecorderDelegat
                     category = processing.usesInputCategory || recording ? .playAndRecord : .playback
                     categoryOptions = category == .playAndRecord && processing.output == .system
                         ? [.allowBluetooth, .allowBluetoothA2DP] : []
+                    if recording && processing.output == .system && !processing.sessionMode.requiresInput {
+                        // Keep ordinary recording playback on the speaker unless an external route is connected.
+                        categoryOptions.insert(.defaultToSpeaker)
+                    }
                     if processing.output == .speaker { categoryOptions.insert(.defaultToSpeaker) }
                 } else if recording {
                     category = .playAndRecord
