@@ -26,13 +26,13 @@ if ($RunId -eq 0) {
     $listArgs = @('run', 'list', '--repo', $repo, '--workflow', $workflow,
         '--branch', $Ref, '--event', 'workflow_dispatch', '--limit', '20',
         '--json', 'databaseId,url')
-    $previous = @(Invoke-Gh -Arguments $listArgs | ConvertFrom-Json)
+    $previous = Invoke-Gh -Arguments $listArgs | ConvertFrom-Json
     $previousIds = @($previous | ForEach-Object { $_.databaseId })
     Invoke-Gh -Arguments @('workflow', 'run', $workflow, '--repo', $repo, '--ref', $Ref)
     $deadline = (Get-Date).AddMinutes(2)
     while ($RunId -eq 0 -and (Get-Date) -lt $deadline) {
         Start-Sleep -Seconds 5
-        $runs = @(Invoke-Gh -Arguments $listArgs | ConvertFrom-Json)
+        $runs = Invoke-Gh -Arguments $listArgs | ConvertFrom-Json
         $newRuns = @($runs | Where-Object { $_.databaseId -notin $previousIds })
         if ($newRuns.Count -gt 1) {
             throw 'Multiple new builds appeared. Check Actions and rerun with -RunId RUN_ID.'
