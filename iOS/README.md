@@ -146,7 +146,8 @@ file names and existing remote log locations remain supported.
 
 The iOS IPA workflow runs native Release compilation, checks settings and
 queue persistence, tests legacy and extended remote manifests, and renders
-audio offline to check that EQ, dynamics, and the limiter affect the signal.
+audio offline to check that EQ and dynamics change signal levels and that the
+limiter renders finite audio.
 Enable **run_ui_tests** when dispatching the workflow to run `PlaybackUITests`
 from the existing UI-test target in an iPhone simulator. The hardware-volume
 tests are excluded from simulator compilation. Normal IPA builds keep the
