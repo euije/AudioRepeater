@@ -2,6 +2,12 @@ name: iOS unsigned IPA
 
 on:
   workflow_dispatch:
+    inputs:
+      run_ui_tests:
+        description: Run the slower iPhone simulator UI checks and capture screenshots
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -143,6 +149,7 @@ jobs:
           compression-level: 0
 
       - name: Test iOS playback and settings in the simulator
+        if: inputs.run_ui_tests
         run: |
           set -euo pipefail
           test_args=(-project "$PROJECT" -scheme VolumeControl -configuration Debug
@@ -172,6 +179,9 @@ jobs:
           xcodebuild test-without-building "${test_args[@]}" -destination "id=$simulator" \
             -resultBundlePath "$PWD/build/UITests.xcresult" \
             -only-testing:AudioRepeaterVolumeUITests/PlaybackUITests \
+            -parallel-testing-enabled NO -test-timeouts-enabled YES \
+            -default-test-execution-time-allowance 90 \
+            -maximum-test-execution-time-allowance 120 \
             2>&1 | tee build/logs/uitests.log
 
       - name: Export simulator screenshots
@@ -187,7 +197,7 @@ jobs:
           xcrun simctl io "$SIMULATOR_ID" screenshot build/ui-artifacts/main.png || true
 
       - name: Upload simulator screenshots
-        if: always()
+        if: always() && inputs.run_ui_tests
         uses: actions/upload-artifact@v7
         with:
           name: AudioRepeaterIOS-simulator

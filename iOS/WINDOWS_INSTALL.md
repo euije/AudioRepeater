@@ -41,6 +41,8 @@ IPA 구조 검증과 실제 설치·재생 검증은 서로 다른 단계입니�
 
 1. [iOS unsigned IPA](https://github.com/euije/AudioRepeater/actions/workflows/ios-ipa.yml)를 엽니다.
 2. **Run workflow**에서 `main` 또는 빌드할 브랜치를 선택합니다.
+   **run_ui_tests**를 켜면 시뮬레이터 UI 검사와 화면 캡처도 실행합니다.
+   일반 IPA 빌드에서는 이 옵션을 꺼 두면 됩니다.
 3. **Run workflow**를 누릅니다.
 4. 새 실행을 열고 `build` 작업의 성공 여부를 확인합니다.
 5. 실행 화면의 **Artifacts**에서 `AudioRepeaterIOS-unsigned`를 다운로드합니다.

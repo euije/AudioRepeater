@@ -147,8 +147,10 @@ file names and existing remote log locations remain supported.
 The iOS IPA workflow runs native Release compilation, checks settings and
 queue persistence, tests legacy and extended remote manifests, and renders
 audio offline to check that EQ, dynamics, and the limiter affect the signal.
-It also runs only `PlaybackUITests` from the existing UI-test target in an
-iPhone simulator. The hardware-volume tests are excluded from CI.
+Enable **run_ui_tests** when dispatching the workflow to run `PlaybackUITests`
+from the existing UI-test target in an iPhone simulator. The hardware-volume
+tests are excluded from simulator compilation. Normal IPA builds keep the
+native settings and rendered-audio checks and omit the slower simulator run.
 Simulator screenshots are uploaded as `AudioRepeaterIOS-simulator`.
 ScreenCaptureKit is unavailable in the simulator SDK, so the simulator omits
 its capture switch and reports unsupported capture requests as errors.
