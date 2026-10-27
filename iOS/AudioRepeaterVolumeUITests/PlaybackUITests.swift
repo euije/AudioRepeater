@@ -55,9 +55,7 @@ final class PlaybackUITests: XCTestCase {
         // Leave the next test with microphone capture disabled.
         reveal(microphone)
         if microphone.value as? String == "1" { tapSwitchThumb(microphone) }
-        reveal(app.buttons["effectPicker"])
-        app.buttons["effectPicker"].tap()
-        app.buttons["Off"].tap()
+        XCTAssertEqual(microphone.value as? String, "0")
     }
 
     private func capture(_ name: String) {
