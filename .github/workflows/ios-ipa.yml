@@ -145,6 +145,16 @@ jobs:
       - name: Test iOS playback and settings in the simulator
         run: |
           set -euo pipefail
+          test_args=(-project "$PROJECT" -scheme VolumeControl -configuration Debug
+            -derivedDataPath "$PWD/build/UITestDerivedData"
+            EXCLUDED_SOURCE_FILE_NAMES=VolumeButtonUITests.swift
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
+            CODE_SIGN_IDENTITY= DEVELOPMENT_TEAM=)
+          # Hardware volume button APIs cannot compile for the simulator.
+          # Build before booting so compilation errors fail without a long boot.
+          xcodebuild build-for-testing "${test_args[@]}" \
+            -destination 'generic/platform=iOS Simulator' \
+            2>&1 | tee build/logs/uitest-build.log
           xcrun simctl list devices available --json > build/simulators.json
           simulator="$(python3 - <<'PY'
           import json
@@ -159,13 +169,9 @@ jobs:
           xcrun simctl boot "$simulator" || true
           xcrun simctl bootstatus "$simulator" -b
           # Select only PlaybackUITests. Never run the hardware volume tests.
-          xcodebuild test -project "$PROJECT" -scheme VolumeControl \
-            -configuration Debug -destination "id=$simulator" \
-            -derivedDataPath "$PWD/build/UITestDerivedData" \
+          xcodebuild test-without-building "${test_args[@]}" -destination "id=$simulator" \
             -resultBundlePath "$PWD/build/UITests.xcresult" \
             -only-testing:AudioRepeaterVolumeUITests/PlaybackUITests \
-            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY= DEVELOPMENT_TEAM= \
             2>&1 | tee build/logs/uitests.log
 
       - name: Export simulator screenshots
@@ -174,6 +180,8 @@ jobs:
           mkdir -p build/ui-artifacts
           xcrun xcresulttool export attachments --path build/UITests.xcresult \
             --output-path build/ui-artifacts || true
+          xcrun simctl install "$SIMULATOR_ID" \
+            build/UITestDerivedData/Build/Products/Debug-iphonesimulator/AudioRepeaterIOS.app || true
           xcrun simctl launch "$SIMULATOR_ID" com.a2m.audiorepeater.ios --ui-test || true
           sleep 3
           xcrun simctl io "$SIMULATOR_ID" screenshot build/ui-artifacts/main.png || true
