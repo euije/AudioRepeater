@@ -53,6 +53,7 @@ internal fun debugProcessingJson(value: PlaybackProcessing): JSONObject = JSONOb
 internal fun exportPlaybackCapabilities(context: Context) {
     val result = JSONObject().apply {
         put("contract_version", 1); put("build", Build.DEVICE); put("model", Build.MODEL)
+        put("playlist_settings_version", 1)
         put("sdk", Build.VERSION.SDK_INT); put("fingerprint", Build.FINGERPRINT)
         val root = hasRootAccess()
         put("root", root); put("root_shell", if (root) resolveRootShell() else JSONObject.NULL)

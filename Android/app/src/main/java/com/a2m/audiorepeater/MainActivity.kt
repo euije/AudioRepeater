@@ -396,6 +396,7 @@ internal fun AudioRepeaterApp(debugAudioConfig: DebugAudioConfig? = null) {
             )
         } else {
             Log.i(LOG_TAG, "restored persisted debug list files=${debugItems.size} without autoplay")
+            Log.i(LOG_TAG, "restored persisted debug playback backend=${selectedBackend.name} processing=${debugProcessingJson(processing)}")
         }
     }
 
@@ -903,7 +904,7 @@ internal data class DebugAudioConfig(
     }
 }
 
-private fun Context.savePersistedDebugAudioConfig(config: DebugAudioConfig) {
+internal fun Context.savePersistedDebugAudioConfig(config: DebugAudioConfig) {
     getSharedPreferences(PERSISTED_PLAYLIST_PREFERENCES, Context.MODE_PRIVATE)
         .edit()
         .putString(PERSISTED_PLAYLIST_PATHS, config.localPaths.joinToString("\n"))
@@ -917,10 +918,11 @@ private fun Context.savePersistedDebugAudioConfig(config: DebugAudioConfig) {
         .putBoolean(PERSISTED_PLAYLIST_ROUTE_ASSIST, config.forceStereoRouteAssist)
         .putInt(PERSISTED_PLAYLIST_PCM_DEVICE, config.directAlsaPcmDevice ?: -1)
         .putBoolean(PERSISTED_PLAYLIST_RECORD_UNPROCESSED, config.recordUnprocessed)
+        .putString("processing", debugProcessingJson(config.processing).toString())
         .apply()
 }
 
-private fun Context.loadPersistedDebugAudioConfig(): DebugAudioConfig? {
+internal fun Context.loadPersistedDebugAudioConfig(): DebugAudioConfig? {
     val preferences =
         getSharedPreferences(PERSISTED_PLAYLIST_PREFERENCES, Context.MODE_PRIVATE)
     val paths = preferences.getString(PERSISTED_PLAYLIST_PATHS, null)
@@ -949,7 +951,8 @@ private fun Context.loadPersistedDebugAudioConfig(): DebugAudioConfig? {
             .takeIf { device -> device >= 0 },
         recordUnprocessed =
             preferences.getBoolean(PERSISTED_PLAYLIST_RECORD_UNPROCESSED, false),
-        autoPlayOnLoad = false
+        autoPlayOnLoad = false,
+        processing = parseDebugProcessing(preferences.getString("processing", null))
     )
 }
 
