@@ -144,6 +144,11 @@ file names and existing remote log locations remain supported.
 
 ## Verification
 
+[The 2026-10-27 validation run](https://github.com/euije/AudioRepeater/actions/runs/40506022824)
+built version 1.1 (2), passed 20 core checks, and passed both simulator UI tests.
+The UI tests cover effect playback, both playback paths, Stop, and queue and
+microphone-option persistence after relaunch.
+
 The iOS IPA workflow runs native Release compilation, checks settings and
 queue persistence, tests legacy and extended remote manifests, and renders
 audio offline to check that EQ and dynamics change signal levels and that the
