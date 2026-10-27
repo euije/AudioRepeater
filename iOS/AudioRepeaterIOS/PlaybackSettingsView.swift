@@ -29,7 +29,7 @@ struct PlaybackEffectEditor: View {
                         parameter("Headroom", value: $settings.dynamics.headroomDB, range: 0.1...40, unit: "dB")
                         parameter("Attack", value: $settings.dynamics.attackMS, range: 0.1...200, unit: "ms")
                         parameter("Release", value: $settings.dynamics.releaseMS, range: 10...3000, unit: "ms")
-                        parameter("Master gain", value: $settings.dynamics.masterGainDB, range: -40...24, unit: "dB")
+                        parameter("Overall gain", value: $settings.dynamics.masterGainDB, range: -40...24, unit: "dB")
                         Toggle("Peak limiter", isOn: $settings.dynamics.peakLimiter)
                         Button("Reset dynamics") { settings.dynamics = DynamicsSettings() }
                     } footer: {

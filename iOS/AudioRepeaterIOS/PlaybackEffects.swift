@@ -33,7 +33,7 @@ enum PlaybackEffects {
             try set(dynamics, kDynamicsProcessorParam_HeadRoom, value.headroomDB)
             try set(dynamics, kDynamicsProcessorParam_AttackTime, value.attackMS / 1000)
             try set(dynamics, kDynamicsProcessorParam_ReleaseTime, value.releaseMS / 1000)
-            try set(dynamics, kDynamicsProcessorParam_MasterGain, value.masterGainDB)
+            try set(dynamics, kDynamicsProcessorParam_OverallGain, value.masterGainDB)
             // Disable expansion so this control changes compression only.
             try set(dynamics, kDynamicsProcessorParam_ExpansionRatio, 1)
             append(dynamics)

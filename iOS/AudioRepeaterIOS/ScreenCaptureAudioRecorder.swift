@@ -31,9 +31,18 @@ final class ScreenCaptureAudioRecorder: NSObject, SCContentSharingPickerObserver
         picker.add(self)
         picker.isActive = true
         log("AudioRepeaterIOS ScreenCaptureKit picker presented")
-        try await withCheckedThrowingContinuation { continuation in
-            startContinuation = continuation
-            picker.presentForCurrentApplication()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                startContinuation = continuation
+                picker.presentForCurrentApplication()
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                picker.remove(self)
+                picker.isActive = false
+                self.resolveStart(.failure(CancellationError()))
+            }
         }
     }
 

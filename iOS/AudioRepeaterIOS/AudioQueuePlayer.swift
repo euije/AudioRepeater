@@ -581,6 +581,15 @@ final class AudioQueuePlayer: NSObject, ObservableObject, AVAudioRecorderDelegat
         }
     }
 
+    nonisolated func audioRecorderDidFinishRecording(_ recorder: AVAudioRecorder, successfully flag: Bool) {
+        guard !flag else { return }
+        Task { @MainActor [weak self] in
+            guard let self, self.microphoneRecorder === recorder else { return }
+            self.errorMessage = "Microphone recording ended before playback finished."
+            self.stop()
+        }
+    }
+
     private func runAVAudioEngine(
         items: [QueueItem],
         sameFileDelaySeconds: Double,
