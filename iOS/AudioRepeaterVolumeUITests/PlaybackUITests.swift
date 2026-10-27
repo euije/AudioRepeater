@@ -81,13 +81,21 @@ final class PlaybackUITests: XCTestCase {
     private func reveal(_ element: XCUIElement) {
         let top = app.navigationBars.firstMatch.frame.maxY
         let bottom = app.buttons["playQueue"].frame.minY - 12
+        let middle = (top + bottom) / 2
         for _ in 0..<10 {
+            var distance: CGFloat = -120
             if element.exists {
                 let frame = element.frame
                 if element.isHittable && frame.minY >= top && frame.maxY <= bottom { return }
-                if frame.minY < top { app.swipeDown(); continue }
+                distance = frame.midY < middle ? 120 : -120
+                print("Reveal \(element.identifier): frame=\(frame), visible=\(top)...\(bottom)")
             }
-            app.swipeUp()
+            // A full-screen swipe can move a row from below the footer to above
+            // the navigation bar. Short drags keep the row inside the viewport.
+            let origin = app.coordinate(withNormalizedOffset: .zero)
+            let start = origin.withOffset(CGVector(dx: app.frame.width / 2, dy: middle))
+            let end = origin.withOffset(CGVector(dx: app.frame.width / 2, dy: middle + distance))
+            start.press(forDuration: 0.15, thenDragTo: end)
         }
         XCTFail("Could not reveal the complete control above the fixed playback bar: \(element)")
     }
