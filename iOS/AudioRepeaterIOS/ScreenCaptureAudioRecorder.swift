@@ -1,6 +1,7 @@
 import AVFoundation
 import CoreMedia
 import Foundation
+#if canImport(ScreenCaptureKit) && !targetEnvironment(simulator)
 import ScreenCaptureKit
 
 @available(iOS 27.0, *)
@@ -206,6 +207,19 @@ final class ScreenCaptureAudioRecorder: NSObject, SCContentSharingPickerObserver
         }
     }
 }
+
+#else
+@available(iOS 27.0, *)
+final class ScreenCaptureAudioRecorder {
+    @MainActor
+    func start(outputURL: URL, log: @escaping (String) -> Void) async throws {
+        throw ScreenCaptureAudioError.unavailable
+    }
+
+    @MainActor
+    func stop() async throws {}
+}
+#endif
 
 @available(iOS 27.0, *)
 enum ScreenCaptureAudioError: LocalizedError {

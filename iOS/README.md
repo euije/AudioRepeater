@@ -148,6 +148,8 @@ audio offline to check that EQ, dynamics, and the limiter affect the signal.
 It also runs only `PlaybackUITests` from the existing UI-test target in an
 iPhone simulator. The hardware-volume tests are excluded from CI.
 Simulator screenshots are uploaded as `AudioRepeaterIOS-simulator`.
+ScreenCaptureKit is unavailable in the simulator SDK, so the simulator omits
+its capture switch and reports unsupported capture requests as errors.
 The simulator checks do not verify a physical iPhone's output route,
 microphone, ScreenCaptureKit permissions, or acoustic response.
 

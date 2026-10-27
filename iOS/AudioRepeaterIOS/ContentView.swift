@@ -162,9 +162,11 @@ struct ContentView: View {
             Section("Recording") {
                 Toggle("Record microphone with playback", isOn: $settings.recordMicrophone)
                     .accessibilityIdentifier("recordMicrophone")
+                #if canImport(ScreenCaptureKit) && !targetEnvironment(simulator)
                 if #available(iOS 27.0, *) {
                     Toggle("Capture app audio", isOn: $settings.captureSystemAudio)
                 }
+                #endif
                 if settings.recordMicrophone {
                     Text("48 kHz mono PCM16 WAV. Measurement mode minimizes input processing. Voice chat modes request the system's chat session policy.")
                         .font(.caption).foregroundStyle(.secondary)
