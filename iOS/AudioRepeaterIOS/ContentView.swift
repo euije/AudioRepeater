@@ -64,7 +64,14 @@ struct ContentView: View {
             .safeAreaInset(edge: .bottom) {
                 playbackControls.padding(.horizontal).padding(.vertical, 8).background(.regularMaterial)
             }
-            .toolbar { ToolbarItem(placement: .navigationBarTrailing) { EditButton().disabled(isPlaybackRunning) } }
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button { isImporterPresented = true } label: { Label("Add files", systemImage: "plus") }
+                        .disabled(isPlaybackRunning || isImporting || defaultRepeat == nil)
+                        .accessibilityIdentifier("addFilesToolbar")
+                }
+                ToolbarItem(placement: .navigationBarTrailing) { EditButton().disabled(isPlaybackRunning) }
+            }
             .sheet(item: $presentedSheet) { sheet in
                 if sheet == .recordings {
                     RecordingLibraryView { url in
@@ -132,6 +139,8 @@ struct ContentView: View {
                     Picker("Effect", selection: $settings.effect) {
                         ForEach(PlaybackEffect.allCases, id: \.self) { Text($0.label).tag($0) }
                     }
+                    .labelsHidden()
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .accessibilityIdentifier("effectPicker")
                     Button("Settings") {
                         presentedSheet = settings.effect == .equalizer ? .equalizer : .dynamics

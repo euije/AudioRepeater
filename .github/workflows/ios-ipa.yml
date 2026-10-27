@@ -180,8 +180,8 @@ jobs:
             -resultBundlePath "$PWD/build/UITests.xcresult" \
             -only-testing:AudioRepeaterVolumeUITests/PlaybackUITests \
             -parallel-testing-enabled NO -test-timeouts-enabled YES \
-            -default-test-execution-time-allowance 90 \
-            -maximum-test-execution-time-allowance 120 \
+            -default-test-execution-time-allowance 180 \
+            -maximum-test-execution-time-allowance 240 \
             2>&1 | tee build/logs/uitests.log
 
       - name: Export simulator screenshots

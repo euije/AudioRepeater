@@ -40,21 +40,21 @@ final class PlaybackUITests: XCTestCase {
         app.buttons["Done"].tap()
         playBrieflyAndStop()
         let microphone = app.switches["recordMicrophone"]
-        for _ in 0..<4 where !microphone.isHittable { app.swipeUp() }
-        XCTAssertTrue(microphone.isHittable)
+        reveal(microphone)
         if microphone.value as? String != "1" { microphone.tap() }
+        XCTAssertEqual(microphone.value as? String, "1", "The switch must change before testing persistence")
         capture("Recording and queue")
         app.terminate()
         app.launch()
-        for _ in 0..<4 where !microphone.isHittable { app.swipeUp() }
+        reveal(microphone)
         XCTAssertEqual(microphone.value as? String, "1")
         let item = app.staticTexts["Test tone.wav"]
-        for _ in 0..<4 where !item.isHittable { app.swipeUp() }
+        reveal(item)
         XCTAssertTrue(item.exists)
         // Leave the next test with microphone capture disabled.
-        for _ in 0..<5 where !microphone.isHittable { app.swipeDown() }
+        reveal(microphone)
         if microphone.value as? String == "1" { microphone.tap() }
-        for _ in 0..<5 where !app.buttons["effectPicker"].isHittable { app.swipeDown() }
+        reveal(app.buttons["effectPicker"])
         app.buttons["effectPicker"].tap()
         app.buttons["Off"].tap()
     }
@@ -76,5 +76,19 @@ final class PlaybackUITests: XCTestCase {
         expectation(for: idle, evaluatedWith: app.buttons["playQueue"])
         waitForExpectations(timeout: 10)
         XCTAssertFalse(app.alerts.firstMatch.exists)
+    }
+
+    private func reveal(_ element: XCUIElement) {
+        let top = app.navigationBars.firstMatch.frame.maxY
+        let bottom = app.buttons["playQueue"].frame.minY - 12
+        for _ in 0..<10 {
+            if element.exists {
+                let frame = element.frame
+                if element.isHittable && frame.minY >= top && frame.maxY <= bottom { return }
+                if frame.minY < top { app.swipeDown(); continue }
+            }
+            app.swipeUp()
+        }
+        XCTFail("Could not reveal the complete control above the fixed playback bar: \(element)")
     }
 }
