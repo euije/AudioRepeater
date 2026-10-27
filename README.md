@@ -38,6 +38,8 @@ phone. Updates installed with `adb install -r` retain existing app data.
 
 ## iOS
 
+<img src="docs/images/ios-equalizer.png" alt="AudioRepeater iOS five-band equalizer" width="240"> <img src="docs/images/ios-dynamics.png" alt="AudioRepeater iOS native dynamics and peak limiter" width="240">
+
 See [iOS setup](iOS/README.md) for Xcode builds, signing, remote playback, and
 the optional IOAudio2 bridge. Device identifiers, SSH configuration, and Apple
 team identifiers must be supplied locally.
