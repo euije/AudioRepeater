@@ -6,6 +6,12 @@ can supply imported files. The app copies provider files before playback.
 
 ## Build
 
+Windows users can build an unsigned iPhone IPA on GitHub Actions and install it
+with Sideloadly. See [Windows build and installation](WINDOWS_INSTALL.md).
+The shared `AudioRepeaterIOS` scheme builds only the app.
+The current sources require Xcode 27 and the iOS 27 SDK for ScreenCaptureKit;
+the deployment target remains iOS 16.
+
 Open `AudioRepeaterIOS.xcodeproj` on a Mac with Xcode. Select your development
 team in Signing & Capabilities. The project does not contain a team ID.
 The deployment target is iOS 16. Features that require a newer system perform
