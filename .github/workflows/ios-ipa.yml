@@ -1,0 +1,136 @@
+name: iOS unsigned IPA
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    # ScreenCaptureAudioRecorder uses the iOS 27 ScreenCaptureKit SDK.
+    # https://github.com/actions/runner-images/issues/14404
+    runs-on: xcode-27
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    env:
+      DEVELOPER_DIR: /Applications/Xcode.app/Contents/Developer
+      PROJECT: iOS/AudioRepeaterIOS.xcodeproj
+      SCHEME: AudioRepeaterIOS
+
+    steps:
+      - name: Check out sources
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Check Xcode, device SDK, and shared scheme
+        run: |
+          set -euo pipefail
+          mkdir -p build/logs build/artifacts
+          {
+            sw_vers
+            xcodebuild -version
+            xcodebuild -showsdks
+            xcrun swift --version
+            sdk_version="$(xcrun --sdk iphoneos --show-sdk-version)"
+            [[ "${sdk_version%%.*}" -ge 27 ]] || {
+              echo "::error::This project requires the iOS 27 SDK for ScreenCaptureKit."
+              exit 1
+            }
+          } 2>&1 | tee build/logs/environment.log
+          xcodebuild -list -project "$PROJECT" 2>&1 | tee build/logs/project.log
+
+      - name: Resolve project packages
+        run: |
+          set -euo pipefail
+          # There are no external packages today. Keep Xcode's resolver explicit.
+          xcodebuild -resolvePackageDependencies \
+            -project "$PROJECT" -scheme "$SCHEME" \
+            -clonedSourcePackagesDirPath "$PWD/build/SourcePackages" \
+            2>&1 | tee build/logs/packages.log
+
+      - name: Build unsigned Release app for iPhone
+        run: |
+          set -euo pipefail
+          xcodebuild build \
+            -project "$PROJECT" -scheme "$SCHEME" \
+            -configuration Release -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$PWD/build/DerivedData" \
+            -clonedSourcePackagesDirPath "$PWD/build/SourcePackages" \
+            -resultBundlePath "$PWD/build/Build.xcresult" \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=NO \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY= DEVELOPMENT_TEAM= \
+            2>&1 | tee build/logs/xcodebuild.log
+
+      - name: Verify app and package IPA
+        run: |
+          set -euo pipefail
+          app="$PWD/build/DerivedData/Build/Products/Release-iphoneos/AudioRepeaterIOS.app"
+          test -d "$app"
+          plutil -lint "$app/Info.plist"
+          executable="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Info.plist")"
+          [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Info.plist")" == 'com.a2m.audiorepeater.ios' ]]
+          [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleSupportedPlatforms:0' "$app/Info.plist")" == 'iPhoneOS' ]]
+          xcrun lipo -verify_arch arm64 "$app/$executable"
+          xcrun vtool -show-build "$app/$executable" | tee build/logs/macho.log
+          grep -Eq 'platform[[:space:]]+IOS$' build/logs/macho.log
+          # Fresh device builds must be unsigned; Sideloadly supplies the signature.
+          if codesign -d "$app" >build/logs/signature.log 2>&1; then
+            echo '::error::Expected an unsigned app, but found a signature.'
+            exit 1
+          fi
+          test ! -e "$app/embedded.mobileprovision"
+          mkdir -p build/package/Payload
+          ditto "$app" build/package/Payload/AudioRepeaterIOS.app
+          (cd build/package && /usr/bin/zip -qry ../artifacts/AudioRepeaterIOS-unsigned.ipa Payload)
+          unzip -t build/artifacts/AudioRepeaterIOS-unsigned.ipa
+          python3 - <<'PY'
+          import plistlib, zipfile
+          with zipfile.ZipFile('build/artifacts/AudioRepeaterIOS-unsigned.ipa') as ipa:
+              root = 'Payload/AudioRepeaterIOS.app/'
+              info = plistlib.loads(ipa.read(root + 'Info.plist'))
+              assert root + info['CFBundleExecutable'] in ipa.namelist()
+              assert info['CFBundlePackageType'] == 'APPL'
+              assert info['CFBundleSupportedPlatforms'] == ['iPhoneOS']
+              assert not any('.appex/' in n for n in ipa.namelist())
+              print('Verified device IPA:', info['CFBundleIdentifier'], 'minimum iOS', info['MinimumOSVersion'])
+          PY
+          (cd build/artifacts && shasum -a 256 AudioRepeaterIOS-unsigned.ipa > SHA256SUMS.txt)
+          {
+            echo "Commit: $GITHUB_SHA"
+            xcodebuild -version
+            echo "iPhoneOS SDK: $(xcrun --sdk iphoneos --show-sdk-version)"
+            echo 'Scheme: AudioRepeaterIOS; Release; arm64; unsigned'
+            echo 'Re-sign and install with Sideloadly on Windows.'
+          } > build/artifacts/build-info.txt
+          {
+            echo '### AudioRepeater iOS IPA'
+            echo 'Download **AudioRepeaterIOS-unsigned** below and extract the ZIP.'
+            echo 'Open AudioRepeaterIOS-unsigned.ipa in Sideloadly on Windows.'
+            echo 'This build does not verify device installation or playback.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@v7
+        with:
+          name: AudioRepeaterIOS-unsigned
+          path: build/artifacts/
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+      - name: Upload build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: AudioRepeaterIOS-build-logs
+          path: |
+            build/logs/
+            build/Build.xcresult/
+          if-no-files-found: warn
+          retention-days: 14
