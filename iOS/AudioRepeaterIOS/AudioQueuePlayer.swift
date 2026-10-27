@@ -221,6 +221,12 @@ final class AudioQueuePlayer: NSObject, ObservableObject, AVAudioRecorderDelegat
                 guard granted else { throw PlaybackSettingsError.microphoneDenied }
             }
             prepareEventLog(at: eventLogURL)
+            if let processing {
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = [.sortedKeys]
+                let json = String(decoding: try encoder.encode(processing), as: UTF8.self)
+                recordEvent("AudioRepeaterIOS processing=\(json) activeEffect=\(processing.activeEffect.rawValue) effectiveMode=\(processing.effectiveSessionMode.rawValue)", to: eventLogURL)
+            }
             recordEvent(
                 "AudioRepeaterIOS playQueue start items=\(items.count) sameDelay=\(sameFileDelaySeconds) diffDelay=\(differentFileDelaySeconds) path=\(playbackPath.rawValue) pan=\(avAudioEnginePan) gain=\(avAudioEngineGain) directPCM=\(avAudioEngineDirectPCM) isolateSignals=\(avAudioEngineIsolateSignals) eqFrequency=\(avAudioEngineEQFrequency) eqGain=\(avAudioEngineEQGain) eqBandwidth=\(avAudioEngineEQBandwidth) automaticFormat=\(avAudioEngineAutomaticFormat) completionCallback=\(avAudioEngineCompletionCallback) stopEachSignal=\(avAudioEngineStopPlayerEachSignal) completionDelayFrames=\(avAudioEngineCompletionDelayFrames) stereoMode=\(avAudioEngineStereoMode) ioBuffer=\(preferredIOBufferDuration) forceMaxVolume=\(forceMaximumOutputVolume) mode=\(avAudioSessionMode) captureSystemAudio=\(systemAudioCaptureURL != nil) displayIdleTimerDisabled=\(UIApplication.shared.isIdleTimerDisabled)",
                 to: eventLogURL

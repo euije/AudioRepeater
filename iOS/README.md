@@ -137,6 +137,8 @@ Omitted processing fields use defaults. A top-level `playbackPath` overrides
 processing flag. The five EQ gains are in dB. Dynamics fields are `thresholdDB`,
 `headroomDB`, `attackMS`, `releaseMS`, `masterGainDB`, and `peakLimiter` inside
 `processing.dynamics`. `masterGainDB` maps to Apple's Overall Gain parameter.
+When `processing` is present, its selected effect replaces the legacy single-band
+EQ settings. The remote log records the processing object and effective mode.
 New microphone recordings go to Documents/Recordings. Legacy system-capture
 file names and existing remote log locations remain supported.
 
