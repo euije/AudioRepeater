@@ -91,6 +91,27 @@ Set `AUDIOREPEATER_IOS_ROOT` to override that directory, or
 
 ## Remote playback from Windows
 
+Version 1.2 also supports the A2M Optimize controller through a paired Mac.
+Windows records the USB search coil and MicArray. The Mac transfers files and
+controls the iPhone with Xcode's `devicectl` over the existing SSH connection.
+Keep AudioRepeater in the foreground, allow microphone recording, and use the
+iPhone's volume buttons to set media volume to maximum before an experiment.
+
+The app-container protocol uses `Documents/a2m-optimize-control.json` and
+`Documents/a2m-optimize-status.json`. It does not open a network listener.
+Commands have unique IDs and execute once. `prepare` activates the audio
+session for a valid volume readback. `acquire` saves the queue, settings and
+volume under an owner lease. `play` accepts a staged manifest only when its
+SHA-256 and owner match. `release` stops playback and verifies restoration.
+The app attempts recovery after a lease expires or the app restarts.
+
+Status includes the executable SHA-256, uploaded input hashes and frame
+counts, native uptime, route, volume readings, completion and the new
+microphone file's hash and format. These establish source-file identity;
+they do not establish sample identity at the DAC or synchronized ADC clocks.
+Interactive signing remains a deployment step in the Mac login session.
+Do not put Apple credentials in the viewer configuration or GitHub Actions.
+
 `scripts/play_remote.ps1` stages local WAV files on a Mac, uploads them into
 the app container, and optionally launches playback. Its default Mac working
 directory is `~/AudioRepeaterIOSWork`. It expects the built app under

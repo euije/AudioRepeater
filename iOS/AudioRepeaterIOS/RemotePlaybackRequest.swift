@@ -25,6 +25,8 @@ struct ResolvedRemotePlaybackRequest {
     let eventLogURL: URL
     let processing: PlaybackSettings?
     let microphoneRecordingURL: URL?
+    let requestID: String?
+    let experimentOwner: String?
 }
 
 enum RemotePlaybackRequestLoader {
@@ -58,6 +60,8 @@ enum RemotePlaybackRequestLoader {
         let systemAudioCaptureFileName: String?
         let processing: PlaybackSettings?
         let recordMicrophone: Bool?
+        let requestID: String?
+        let experimentOwner: String?
     }
 
     private static let manifestName = "remote-playback.json"
@@ -232,7 +236,9 @@ enum RemotePlaybackRequestLoader {
             systemAudioCaptureURL: systemAudioCaptureURL,
             eventLogURL: eventLogURL,
             processing: processing,
-            microphoneRecordingURL: microphoneRecordingURL
+            microphoneRecordingURL: microphoneRecordingURL,
+            requestID: request.requestID,
+            experimentOwner: request.experimentOwner
         )
     }
 

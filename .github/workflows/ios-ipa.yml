@@ -119,8 +119,11 @@ jobs:
               assert info.get('NSScreenCaptureUsageDescription')
               assert info.get('UIFileSharingEnabled') is True
               assert info.get('LSSupportsOpeningDocumentsInPlace') is True
-              assert info['CFBundleShortVersionString'] == '1.1'
-              assert info['CFBundleVersion'] == '2'
+              from pathlib import Path
+              import re
+              project = Path('iOS/AudioRepeaterIOS.xcodeproj/project.pbxproj').read_text()
+              assert info['CFBundleShortVersionString'] == re.search(r'MARKETING_VERSION = ([^;]+);', project)[1]
+              assert info['CFBundleVersion'] == re.search(r'CURRENT_PROJECT_VERSION = ([^;]+);', project)[1]
               assert not any('.appex/' in n for n in ipa.namelist())
               print('Verified device IPA:', info['CFBundleIdentifier'], 'minimum iOS', info['MinimumOSVersion'])
           PY

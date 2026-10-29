@@ -79,11 +79,17 @@ struct PlaybackTests {
         let legacy = try RemotePlaybackRequestLoader.consumeIfPresent(in: documents)!
         try check(legacy.processing == nil && legacy.playbackPath == .avAudioEngine && legacy.microphoneRecordingURL == nil,
             "Legacy remote requests must keep their original processing contract")
+        try check(legacy.requestID == nil && legacy.experimentOwner == nil,
+            "Legacy playback must not acquire an experiment owner")
+        request["requestID"] = "integration-request"
+        request["experimentOwner"] = "integration-owner"
         request["processing"] = ["effect": "equalizer", "equalizerGains": [0, 0, 5, 0, 0], "recordMicrophone": true]
         try JSONSerialization.data(withJSONObject: request).write(to: manifest)
         let processed = try RemotePlaybackRequestLoader.consumeIfPresent(in: documents)!
         try check(processed.processing?.activeEffect == .equalizer && processed.microphoneRecordingURL?.pathExtension == "wav",
             "Remote processing and recording must reach the resolved request")
+        try check(processed.requestID == "integration-request" && processed.experimentOwner == "integration-owner",
+            "Experimental playback must retain the request and lease owner identities")
         request["captureSystemAudio"] = true
         request["systemAudioCaptureFileName"] = "../invalid.caf"
         let log = documents.appendingPathComponent("remote-playback-status.log")

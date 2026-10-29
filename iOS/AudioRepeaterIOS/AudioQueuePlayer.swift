@@ -175,6 +175,42 @@ final class AudioQueuePlayer: NSObject, ObservableObject, AVAudioRecorderDelegat
         stopEngine(deactivateAudioSession: false)
     }
 
+    func prepareForExperiment(settings: PlaybackSettings, volume: Float) async throws {
+        try await prepareExperimentSession(settings: settings)
+        try await setExperimentVolume(volume)
+        guard abs(AVAudioSession.sharedInstance().outputVolume - volume) < 0.005 else {
+            throw AudioQueueError.audioSessionUnavailable
+        }
+    }
+
+    func prepareExperimentSession(settings: PlaybackSettings) async throws {
+        guard !state.isRunning else { throw AudioQueueError.audioSessionUnavailable }
+        errorMessage = nil
+        try await configureAudioSession(modeName: settings.effectiveSessionMode.rawValue,
+            preferredIOBufferDuration: 0, forceMaximumOutputVolume: false, eventLogURL: nil,
+            processing: settings, recording: settings.recordMicrophone)
+    }
+
+    func setExperimentVolume(_ volume: Float) async throws {
+        guard volume.isFinite, (0...1).contains(volume) else { throw AudioQueueError.audioSessionUnavailable }
+        if abs(AVAudioSession.sharedInstance().outputVolume - volume) < 0.005 { return }
+        let view: MPVolumeView
+        if let existing = systemVolumeView { view = existing }
+        else {
+            view = MPVolumeView(frame: CGRect(x: -100, y: -100, width: 1, height: 1))
+            view.alpha = 0.01
+            UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+                .flatMap(\.windows).first { $0.isKeyWindow }?.rootViewController?.view.addSubview(view)
+            systemVolumeView = view
+        }
+        guard let slider = view.subviews.first(where: { $0 is UISlider }) as? UISlider else {
+            throw AudioQueueError.audioSessionUnavailable
+        }
+        slider.setValue(volume, animated: false)
+        slider.sendActions(for: .valueChanged)
+        try await Task.sleep(nanoseconds: 300_000_000)
+    }
+
     private func cancelCurrentPlayback(deactivateAudioSession: Bool) {
         runID += 1
         playbackTask?.cancel()

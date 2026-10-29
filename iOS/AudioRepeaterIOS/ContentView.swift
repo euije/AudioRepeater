@@ -4,6 +4,7 @@ import SwiftUI
 
 struct ContentView: View {
     @StateObject private var player = AudioQueuePlayer()
+    @StateObject private var experimentControl = ExperimentControl()
     @StateObject private var ioAudio2Bridge = IOAudio2BridgeController()
     @AppStorage(AudioRepeaterPreferences.ioAudio2RingOverwriteEnabled)
     private var ioAudio2RingOverwriteEnabled = false
@@ -31,7 +32,7 @@ struct ContentView: View {
     }
 
     private var isPlaybackRunning: Bool {
-        player.state.isRunning || ioAudio2Bridge.state.isRunning
+        player.state.isRunning || ioAudio2Bridge.state.isRunning || experimentControl.isLeased
     }
 
     private var activePlaybackState: PlaybackState {
@@ -239,6 +240,25 @@ struct ContentView: View {
         } catch { alertMessage = "Could not save the queue: \(error.localizedDescription)" }
     }
 
+    private func experimentSnapshot() throws -> Data {
+        try LibraryStore().save(items: items, defaultRepeats: defaultRepeatText,
+            repeatDelay: sameFileDelayText, fileDelay: differentFileDelayText, settings: settings)
+        let file = LibraryStore().directory.appendingPathComponent("library.json")
+        let library = try JSONSerialization.jsonObject(with: Data(contentsOf: file))
+        return try JSONSerialization.data(withJSONObject: ["library": library,
+            "bridge_enabled": ioAudio2RingOverwriteEnabled], options: [.sortedKeys])
+    }
+
+    private func restoreExperimentSnapshot(_ data: Data) throws {
+        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let saved = object["library"] else { throw CocoaError(.fileReadCorruptFile) }
+        let library = try JSONSerialization.data(withJSONObject: saved, options: [.sortedKeys])
+        try library.write(to: LibraryStore().directory.appendingPathComponent("library.json"), options: .atomic)
+        didLoadLibrary = false
+        restoreLibrary()
+        ioAudio2RingOverwriteEnabled = object["bridge_enabled"] as? Bool ?? false
+    }
+
     private func startManualPlayback() {
         let queue = items.compactMap { item -> QueueItem? in
             guard item.isEnabled, let repeats = item.repeatCount else { return nil }
@@ -342,6 +362,7 @@ struct ContentView: View {
     @MainActor
     private func monitorRemotePlaybackRequests() async {
         while !Task.isCancelled {
+            await experimentControl.poll(player: player, snapshot: experimentSnapshot, restore: restoreExperimentSnapshot)
             // The IOAudio2 bridge still needs AudioRepeater's silent
             // AVAudioEngine keepalive while ring overwrite is active.
             if !player.state.isRunning {
@@ -361,6 +382,7 @@ struct ContentView: View {
             guard let request = try RemotePlaybackRequestLoader.consumeIfPresent() else {
                 return
             }
+            try experimentControl.notePlayback(request, player: player)
 
             let isRingKeepalive = request.queueItems.count == 1 &&
                 request.queueItems[0].displayName ==
@@ -510,6 +532,13 @@ struct ContentView: View {
                 .disabled(!canPlay)
                 .accessibilityIdentifier("playQueue")
                 Button {
+                    if experimentControl.isLeased {
+                        Task {
+                            do { try await experimentControl.release(player: player,
+                                snapshot: experimentSnapshot, restore: restoreExperimentSnapshot) }
+                            catch { alertMessage = error.localizedDescription }
+                        }
+                    }
                     if ioAudio2Bridge.state.isRunning { ioAudio2Bridge.stop() }
                     if player.state.isRunning { player.stop() }
                 } label: {
