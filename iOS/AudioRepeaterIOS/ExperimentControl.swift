@@ -27,6 +27,7 @@ final class ExperimentControl: ObservableObject {
     private var microphoneBefore: URL?
     private var expectedMicrophone = false
     private var restoration: [String: Any] = [:]
+    private var playlistUpload: [String: Any] = [:]
     private var volumeReadbackValid = false
     private lazy var executableHash = (try? Self.digest(Data(contentsOf: Bundle.main.executableURL!))) ?? ""
 
@@ -77,11 +78,13 @@ final class ExperimentControl: ObservableObject {
             "outputs": session.currentRoute.outputs.map { ["type": $0.portType.rawValue, "name": $0.portName] },
             "request_id": requestID as Any? ?? NSNull(), "input_files": requestFiles,
             "last_control": controlReply, "last_result": lastResult, "restoration": restoration,
+            "playlist_upload_version": 1, "last_playlist_upload": playlistUpload,
             "recording_status": player.recordingStatus,
         ], to: "a2m-optimize-status.json")
     }
 
-    func poll(player: AudioQueuePlayer, snapshot: () throws -> Data, restore: (Data) throws -> Void) async {
+    func poll(player: AudioQueuePlayer, snapshot: () throws -> Data, restore: (Data) throws -> Void,
+              otherPlaybackRunning: Bool = false) async {
         if !recovered {
             recovered = true
             try? FileManager.default.createDirectory(at: url("RemoteAudio"), withIntermediateDirectories: true)
@@ -106,7 +109,8 @@ final class ExperimentControl: ObservableObject {
             processedControlID = id
             UserDefaults.standard.set(id, forKey: "a2mOptimizeLastControlID")
             do {
-                try await handle(command, player: player, snapshot: snapshot, restore: restore)
+                try await handle(command, player: player, snapshot: snapshot, restore: restore,
+                                 otherPlaybackRunning: otherPlaybackRunning)
                 controlReply = ["id": id, "ok": true]
             } catch { controlReply = ["id": id, "ok": false, "error": error.localizedDescription] }
         }
@@ -151,11 +155,34 @@ final class ExperimentControl: ObservableObject {
     }
 
     private func handle(_ command: [String: Any], player: AudioQueuePlayer,
-                        snapshot: () throws -> Data, restore: (Data) throws -> Void) async throws {
+                        snapshot: () throws -> Data, restore: (Data) throws -> Void,
+                        otherPlaybackRunning: Bool) async throws {
         guard let action = command["action"] as? String else { throw ControlError.invalid }
         if action == "status" { return }
+        if action == "install_playlist" {
+            guard lease == nil, !player.state.isRunning, !otherPlaybackRunning,
+                  !FileManager.default.fileExists(atPath: url("remote-playback.json").path) else { throw ControlError.busy }
+            guard let name = command["manifest"] as? String,
+                  name.range(of: "^a2m-optimize-upload-[a-f0-9-]{36}\\.json$", options: .regularExpression) != nil,
+                  let hash = command["sha256"] as? String else { throw ControlError.invalid }
+            let data = try Data(contentsOf: url(name))
+            guard Self.digest(data) == hash else { throw ControlError.hash }
+            let upload = try LibraryStore().uploadedPlaylist(data)
+            let previous = try snapshot()
+            do {
+                try restore(upload.snapshot)
+                let applied = try snapshot()
+                guard applied == upload.snapshot else { throw ControlError.restore }
+                playlistUpload = upload.receipt
+                playlistUpload["snapshot_sha256"] = Self.digest(applied)
+            } catch {
+                try restore(previous)
+                throw error
+            }
+            return
+        }
         if action == "prepare" {
-            guard lease == nil, !player.state.isRunning else { throw ControlError.busy }
+            guard lease == nil, !player.state.isRunning, !otherPlaybackRunning else { throw ControlError.busy }
             let data = try JSONSerialization.data(withJSONObject: command["processing"] ?? [:])
             let settings = try JSONDecoder().decode(PlaybackSettings.self, from: data)
             try settings.validate()
@@ -172,7 +199,7 @@ final class ExperimentControl: ObservableObject {
         guard let owner = command["owner"] as? String,
               owner.range(of: "^[A-Za-z0-9_-]{1,96}$", options: .regularExpression) != nil else { throw ControlError.invalid }
         if action == "acquire" {
-            guard lease == nil, !player.state.isRunning else { throw ControlError.busy }
+            guard lease == nil, !player.state.isRunning, !otherPlaybackRunning else { throw ControlError.busy }
             guard permission() == "granted" else { throw PlaybackSettingsError.microphoneDenied }
             let data = try JSONSerialization.data(withJSONObject: command["processing"] ?? [:])
             let settings = try JSONDecoder().decode(PlaybackSettings.self, from: data)

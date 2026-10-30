@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+import CryptoKit
 
 @main
 struct PlaybackTests {
@@ -71,6 +72,48 @@ struct PlaybackTests {
         let documents = temporary.appendingPathComponent("Documents")
         let audio = documents.appendingPathComponent("RemoteAudio")
         try FileManager.default.createDirectory(at: audio, withIntermediateDirectories: true)
+        let uploadID = UUID().uuidString.lowercased()
+        let uploadName = "a2m_upload_\(uploadID)_m1.wav"
+        let uploadURL = audio.appendingPathComponent(uploadName)
+        do {
+            let file = try AVAudioFile(forWriting: uploadURL, settings: [AVFormatIDKey: kAudioFormatLinearPCM,
+                AVSampleRateKey: 48_000, AVNumberOfChannelsKey: 1, AVLinearPCMBitDepthKey: 16,
+                AVLinearPCMIsFloatKey: false, AVLinearPCMIsBigEndianKey: false])
+            let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: 16)!
+            buffer.frameLength = 16
+            for i in 0..<16 { buffer.floatChannelData![0][i] = 0.1 }
+            try file.write(from: buffer)
+        }
+        let uploadHash = SHA256.hash(data: try Data(contentsOf: uploadURL)).map { String(format: "%02x", $0) }.joined()
+        let uploadFile: [String: Any] = ["fileName": uploadName, "displayName": "c0207_G64_m1.wav", "sha256": uploadHash, "frames": 16]
+        let processingObject = try JSONSerialization.jsonObject(with: JSONEncoder().encode(settings))
+        let validUpload: [String: Any] = ["id": uploadID, "files": [uploadFile], "repeatCount": 2,
+            "sameFileDelaySeconds": 0.5, "differentFileDelaySeconds": 0, "processing": processingObject]
+        let savedBeforeUpload = try Data(contentsOf: store.directory.appendingPathComponent("library.json"))
+        let staged = try store.uploadedPlaylist(JSONSerialization.data(withJSONObject: validUpload))
+        let stagedObject = try JSONSerialization.jsonObject(with: staged.snapshot) as! [String: Any]
+        let stagedLibrary = try JSONDecoder().decode(LibraryStore.Snapshot.self,
+            from: JSONSerialization.data(withJSONObject: stagedObject["library"]!))
+        try check(stagedLibrary.items.count == 1 && stagedLibrary.items[0].repeatText == "2" && stagedLibrary.items[0].isEnabled,
+            "Uploaded queue order, enable state or repeat count changed")
+        try check(stagedLibrary.repeatDelay == "0.5" && stagedLibrary.settings == settings && staged.receipt["autoplay"] as? Bool == false,
+            "Uploaded processing, delay or no-autoplay contract changed")
+        for kind in ["hash", "frames", "path", "duplicates", "delay", "empty", "settings"] {
+            var invalid = validUpload
+            var file = uploadFile
+            switch kind {
+            case "hash": file["sha256"] = String(repeating: "0", count: 64); invalid["files"] = [file]
+            case "frames": file["frames"] = 17; invalid["files"] = [file]
+            case "path": file["fileName"] = "../outside.wav"; invalid["files"] = [file]
+            case "duplicates": invalid["files"] = [file, file]
+            case "delay": invalid["sameFileDelaySeconds"] = -1
+            case "empty": invalid["files"] = []
+            default: invalid["processing"] = ["equalizerGains": [1]]
+            }
+            try rejects({ _ = try store.uploadedPlaylist(JSONSerialization.data(withJSONObject: invalid)) }, "Invalid playlist upload accepted: \(kind)")
+        }
+        try check(try Data(contentsOf: store.directory.appendingPathComponent("library.json")) == savedBeforeUpload,
+            "Upload validation must preserve the previous saved queue")
         try Data([1]).write(to: audio.appendingPathComponent("tone.wav"))
         let manifest = documents.appendingPathComponent("remote-playback.json")
         var request: [String: Any] = ["files": [["fileName": "tone.wav", "repeatCount": 2]],

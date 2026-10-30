@@ -362,7 +362,8 @@ struct ContentView: View {
     @MainActor
     private func monitorRemotePlaybackRequests() async {
         while !Task.isCancelled {
-            await experimentControl.poll(player: player, snapshot: experimentSnapshot, restore: restoreExperimentSnapshot)
+            await experimentControl.poll(player: player, snapshot: experimentSnapshot, restore: restoreExperimentSnapshot,
+                                         otherPlaybackRunning: ioAudio2Bridge.state.isRunning || isImporting)
             // The IOAudio2 bridge still needs AudioRepeater's silent
             // AVAudioEngine keepalive while ring overwrite is active.
             if !player.state.isRunning {
